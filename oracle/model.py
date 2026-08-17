@@ -62,3 +62,31 @@ class Model(nn.Module):
         h = self.lnf(h)
         logits = F.linear(h, self.tok_emb.weight)
         return logits
+
+def load_params(model, p):
+    # nn.Linear stores weight as (out_features, in_features) -- transposed
+    # relative to the numpy convention (x @ W with W as (in, out)) -- so every
+    # Linear weight needs a .T on the way in.
+    with torch.no_grad():
+        model.tok_emb.weight.copy_(torch.from_numpy(p['tok_emb']))
+        model.pos_emb.weight.copy_(torch.from_numpy(p['pos_emb']))
+
+        for l, block in enumerate(model.blocks):
+            block.ln1.weight.copy_(torch.from_numpy(p[f'b{l}.ln1.g']))
+            block.ln1.bias.copy_(torch.from_numpy(p[f'b{l}.ln1.b']))
+
+            block.Wq.weight.copy_(torch.from_numpy(p[f'b{l}.attn.Wq'].T.copy()))
+            block.Wk.weight.copy_(torch.from_numpy(p[f'b{l}.attn.Wk'].T.copy()))
+            block.Wv.weight.copy_(torch.from_numpy(p[f'b{l}.attn.Wv'].T.copy()))
+            block.Wo.weight.copy_(torch.from_numpy(p[f'b{l}.attn.Wo'].T.copy()))
+
+            block.ln2.weight.copy_(torch.from_numpy(p[f'b{l}.ln2.g']))
+            block.ln2.bias.copy_(torch.from_numpy(p[f'b{l}.ln2.b']))
+
+            block.mlp[0].weight.copy_(torch.from_numpy(p[f'b{l}.mlp.W1'].T.copy()))
+            block.mlp[0].bias.copy_(torch.from_numpy(p[f'b{l}.mlp.b1']))
+            block.mlp[2].weight.copy_(torch.from_numpy(p[f'b{l}.mlp.W2'].T.copy()))
+            block.mlp[2].bias.copy_(torch.from_numpy(p[f'b{l}.mlp.b2']))
+
+        model.lnf.weight.copy_(torch.from_numpy(p['lnf.g']))
+        model.lnf.bias.copy_(torch.from_numpy(p['lnf.b']))

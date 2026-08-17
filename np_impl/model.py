@@ -84,7 +84,52 @@ def attention(x, Wq, Wk, Wv, Wo):
     res = np.transpose(res, (0, 2, 1, 3))
     res = np.reshape(res, (res.shape[0], res.shape[1], x.shape[-1]))
 
-    out = res @ Wo
+    O = res @ Wo
 
-    return out
+    return O, (Q, K, V, P)
 
+def gelu(x):
+    return 0.5 * x * (1 + np.tanh(np.sqrt(2/np.pi) * (x + 0.044715 * x ** 3)))
+
+def mlp(x, W1, b1, W2, b2):
+    h = gelu(x @ W1 + b1)
+    return h @ W2 + b2
+
+def block(p, x, l):
+    m, cache = layer_norm(x, p[f"b{l}.ln1.g"], p[f"b{l}.ln1.b"])
+
+    attn, attn_cache = attention(m, p[f"b{l}.attn.Wq"], p[f"b{l}.attn.Wk"], p[f"b{l}.attn.Wv"], p[f"b{l}.attn.Wo"])
+
+    res = x + attn
+
+    m2, cache2 = layer_norm(res, p[f"b{l}.ln2.g"], p[f"b{l}.ln2.b"])
+
+    res2 = mlp(m2, p[f"b{l}.mlp.W1"], p[f"b{l}.mlp.b1"], p[f"b{l}.mlp.W2"], p[f"b{l}.mlp.b2"])
+
+    fin = res + res2
+
+    return fin, (cache, cache2, attn_cache)
+
+def forward(p, x):
+    h = embed(p, x)
+    block_caches = []
+
+    for l in range(L):
+        h, cache = block(p, h, l)
+        block_caches.append(cache)
+
+    h, fin_cache = layer_norm(h, p["lnf.g"], p["lnf.b"])
+    logits = h @ p['tok_emb'].T
+
+    return logits, (block_caches, fin_cache)
+
+def cross_entropy(logits, y):
+    flattened_logits = logits.reshape(-1, V)
+    flattened_y = y.reshape(-1)
+
+    maxi = flattened_logits.max(axis=-1, keepdims=True)
+    logsumexp = maxi + np.log(np.exp(flattened_logits - maxi).sum(axis=-1, keepdims=True))
+
+    true_class_logit = flattened_logits[np.arange(len(flattened_y)), flattened_y]
+
+    return (logsumexp.reshape(-1) - true_class_logit).mean()
