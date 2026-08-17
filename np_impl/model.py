@@ -31,3 +31,60 @@ def init_params(rng):
 
     p["lnf.g"] = np.ones(d); p["lnf.b"] = np.zeros(d)
     return p
+
+def embed(p, x):
+
+    h = p['tok_emb'][x] + p['pos_emb'][:x.shape[1]]
+
+    return h
+
+def layer_norm(x, g, b, eps=1e-5):
+    mu = x.mean(axis=-1, keepdims=True)
+    var = x.var(axis=-1, keepdims=True)
+
+    xhat = (x - mu)/np.sqrt(var + eps)
+
+    return  g * xhat + b, (xhat, np.sqrt(var + eps))
+
+def safe_softmax(v):
+    v_new = v - v.max(axis=-1, keepdims=True)
+    res = np.exp(v_new) / np.exp(v_new).sum(axis=-1, keepdims=True)
+    return res
+
+def attention_single(x, Wq, Wk, Wv):
+    Q, K, V = x @ Wq, x @ Wk, x @ Wv
+
+    S = (Q @ np.transpose(K, axes=(0, 2, 1))) / np.sqrt(x.shape[-1])
+
+    remove = np.triu(np.ones(S.shape, dtype=bool), k = 1)
+    masked = np.where(remove, -np.inf, S)
+
+    P = safe_softmax(masked)
+
+    res = P @ V
+
+    return res
+
+def attention(x, Wq, Wk, Wv, Wo):
+    Q, K, V = x @ Wq, x @ Wk, x @ Wv
+
+    Q, K, V = np.reshape(Q, (Q.shape[0], Q.shape[1], H, Q.shape[2] // H)), np.reshape(K, (Q.shape[0], Q.shape[1], H, Q.shape[2] // H)), np.reshape(V, (Q.shape[0], Q.shape[1], H, Q.shape[2] // H))
+
+    Q, K, V = np.transpose(Q, (0, 2,  1, 3)), np.transpose(K, (0, 2,  1, 3)), np.transpose(V, (0, 2,  1, 3))
+
+    S = (Q @ np.transpose(K, (0, 1, 3, 2))) / np.sqrt(Q.shape[3])
+
+    remove = np.triu(np.ones(S.shape, dtype=bool), k = 1)
+    masked = np.where(remove, -np.inf, S)
+
+    P = safe_softmax(masked)
+
+    res = P @ V
+
+    res = np.transpose(res, (0, 2, 1, 3))
+    res = np.reshape(res, (res.shape[0], res.shape[1], x.shape[-1]))
+
+    out = res @ Wo
+
+    return out
+

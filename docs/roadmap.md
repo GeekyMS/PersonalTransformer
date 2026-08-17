@@ -92,6 +92,50 @@ encoder-decoder. KV cache is deliberately deferred to Phase 6.
 
 ---
 
+# How the paper exercises work
+
+Every phase has **paper exercises**, marked `P<phase>.<n>`. Pencil, paper, *before* you run the
+corresponding code. They are not optional and they are not busywork. The entire project is a bet
+that you can predict machine behavior from first principles, and the only way to find out whether
+you can is to write the prediction down somewhere you can't quietly revise it afterwards.
+
+**The protocol is always the same:**
+
+1. Derive **symbolically** first — in terms of `B, T, d, H, L, V, dh`. Never plug in numbers at the
+   start. A symbolic result tells you how the cost *scales*; a number tells you almost nothing.
+2. Then substitute, and get a number, with units, to two significant figures.
+3. Write both into `docs/notes/paper/`, dated, **before** running anything.
+4. Run the code / counter / profiler.
+5. Write the measured number beside your prediction and compute the ratio. **Never erase the
+   prediction.** The archive of wrong predictions is the record of what you learned.
+
+**Two kinds of exercise, two different bars:**
+
+| Kind | Example | Pass bar |
+|---|---|---|
+| **Counting** — exact combinatorics, no hardware in the loop | parameter count, bytes in `S`, FLOPs in a matmul | **exact.** Off by anything means you miscounted. |
+| **Modeling** — hardware behavior enters | predicted step time, achieved bandwidth, kernel speedup | **within 2×**, *and* you can name the dominant term in the error |
+
+Confusing the two is the commonest way to fool yourself. "Within 2×" is a triumph for a modeling
+exercise and a failure for a counting one.
+
+**Rules that make the numbers mean anything:**
+
+- **Fix your conventions once (P0.1) and never silently change them.** A FLOP count that switches
+  between counting an FMA as 1 and as 2 halfway through the project is worth nothing.
+- **Carry units through every line.** Dimensional analysis catches most algebra errors before the
+  arithmetic even starts. If a result should be in FLOP/byte and your line yields seconds, stop.
+- **Two significant figures.** `12.53 FLOP/byte` implies precision you do not have and hides which
+  term dominates. `~13` is the honest answer and the more useful one.
+- **Estimate before you know.** Once you've seen the measurement you cannot un-see it, and the
+  exercise is spent. There is no way to get it back.
+
+When prediction and measurement disagree, **the gap is the lesson.** It is either a bug in the code
+or a missing term in your model, and both are worth more than a matching pair of numbers. Chase
+every gap over 2× until you can name its cause.
+
+---
+
 # Phase 0 — Data and test harness
 
 *Estimated: 3–5 sessions. Do not skip. Everything downstream is defined as "matches the previous
@@ -246,9 +290,46 @@ For each op, call it with the analytic cost. A matmul `(M,K) @ (K,N)`: `2*M*K*N`
 
 Build this in Phase 0 so you're not retrofitting it in Phase 4.
 
+> **P0.1 — Costing conventions.** Do this *before* writing a single `count()` call, because every
+> number in this project inherits from it.
+>
+> Decide and write down, in your notebook, permanently:
+> - Is an FMA **1 FLOP or 2**? Pick one. Note which convention vendor peak-FLOP/s numbers use, so
+>   you don't compare against a spec sheet in the other convention.
+> - How do you count transcendentals — `exp`, `tanh`, `sqrt`, `rsqrt`? 1 FLOP each, or their real
+>   cost? Look up the special-function-unit throughput ratio on your GPU and record it. Softmax and
+>   GELU are made of these, so this choice moves your Phase 4 table.
+> - **Bytes: you need two counters, not one.** *Compulsory* traffic — every input read once, every
+>   output written once, infinite cache — and *actual* traffic, what your implementation really
+>   moves, re-reads included. They answer different questions. Compulsory bytes give the arithmetic
+>   intensity of the *algorithm*; actual bytes give the AI of your *code*. FlashAttention is the
+>   story of closing the gap between them, so you must be able to see both.
+> - Does an op's byte count include reading its own parameters? For a weight matrix reused across
+>   the whole batch, how does that term scale with `B`?
+>
+> Then, symbolically and under **both** byte conventions, write the FLOP and byte formula for:
+> matmul `(M,K)@(K,N)`; row-softmax over `(R,C)`; layernorm over `(N,d)`; GELU over `N` elements;
+> elementwise add over `N`.
+>
+> **Gate:** your `count()` calls are literal transcriptions of formulas already on the page. If you
+> find yourself deriving at the keyboard, close the editor and go back to paper.
+
+> **P0.2 — Hardware sheet.** For every device you will run on (laptop CPU, GPU), fill in: peak fp32
+> FLOP/s **and the derivation** (clock × cores × FMA width × 2, or whatever your machine's structure
+> is — don't copy a marketing number you can't reconstruct), peak DRAM GB/s from clock × bus width ×
+> channels, cache/SMEM capacities at each level, and the **ridge point** `FLOP/s ÷ GB/s`.
+>
+> Then measure both axes: a large square matmul for achieved FLOP/s, a large-vector triad
+> (`a[i] = b[i] + s*c[i]`) for achieved GB/s. Recompute the **achieved** ridge point. That is the
+> one that governs everything downstream; spec ridge is aspirational.
+>
+> **Gate:** you can state your machine's achieved ridge point from memory, and explain in one
+> sentence why it differs from spec on each axis.
+
 **Phase 0 done when:** you can pull a batch, print it as readable text, verify the shift
-property, gradient-check a hand-written `f(x) = sum(x**2)` to `1e-6`, and load your (empty)
-params into the PyTorch oracle without a shape error.
+property, gradient-check a hand-written `f(x) = sum(x**2)` to `1e-6`, load your (empty)
+params into the PyTorch oracle without a shape error, and `docs/notes/paper/00-conventions.md`
+is filled in with P0.1 and P0.2 complete for every device you own.
 
 ---
 
@@ -285,6 +366,18 @@ this scale. Also scale the residual-path output projections (`Wo`, `W2`) by `1/s
 
 **No bias on the attention projections.** Biases on `Wq/Wk/Wv` are provably redundant with the
 LayerNorm before them. MLP biases are conventional; keep them.
+
+> **P1.1 — Parameter count, by hand, before you run `init_params`.** One row per tensor: name,
+> shape, count symbolically, count numerically. Sum per block, then the whole model, first as an
+> expression in `V, d, L` and only then as a number.
+>
+> Then answer on paper: what fraction of the parameters are embeddings? At what `d`, holding
+> everything else fixed, does the embedding fraction drop below 10%? Real models live on the far
+> side of that crossover and yours does not — knowing which regime you're in explains a lot of
+> otherwise-mysterious advice you'll read.
+>
+> **Gate: exact.** `sum(v.size for v in params.values())` must equal your hand number to the digit.
+> This is a counting exercise; being close is being wrong.
 
 **Sanity check:** with random init and no training, your loss should be `≈ ln(V) ≈ 4.17` nats.
 The model predicts uniformly, and `-ln(1/65) = 4.17`. **If your initial loss isn't ~4.17,
@@ -397,6 +490,18 @@ reshape.** In Phase 5, when you're managing strides by hand, this is where the `
 question comes from: the transpose is free (metadata only), but the reshape after it requires a
 real copy because the memory is no longer laid out the way the new shape claims.
 
+> **P1.2 — What the transposes cost.** Free in metadata is not free in bytes. For the
+> `(B,T,H,dh) → (B,H,T,dh)` pattern applied to `Q, K, V` on the way in and `O` on the way out:
+> how many bytes physically move per layer, counting the read and the write? Multiply by `L`.
+>
+> Now compare that to the bytes in the score matrices `S`, symbolically. Find the `T` at which they
+> cross. Then predict, **before computing**, which one dominates at `T=256` and which at `T=4096` —
+> the two answers are not the same, and the fact that they aren't is why "attention is memory-bound"
+> is a statement about a regime, not a law.
+>
+> **Gate: exact**, and you can state the crossover `T` as a formula in `H, dh` (equivalently `d`),
+> not just as a number.
+
 ## 1.6 GELU and MLP
 
 ```python
@@ -457,8 +562,44 @@ Shakespeare. If you want bits, divide by `ln(2)`.
 Print, for `T` in `[256, 1024, 4096]`: total params, activation memory, and specifically the size
 of all `S` matrices. Save this table — Phase 4 needs it.
 
+**Both exercises below get done on paper first, then the code prints the same table beside yours.**
+The code is the grader here, not the source. If you write the script first you have thrown the
+exercise away, and this is the one whose result you will use in every remaining phase.
+
+> **P1.3 — Forward FLOPs, symbolically.** Derive the forward FLOP count for one block, then the full
+> model including embeddings and the tied output projection. Keep the expression **split into two
+> groups**: terms that scale as `T²` and terms that scale as `T`. Do not collapse them into one
+> number — the split is the whole point.
+>
+> Then solve, algebraically, for the context length at which the `T²` terms equal the `T` terms for
+> *this* model. That crossover is the single most important number in the project. You will cite it
+> in Phase 4, again in Phase 6, and in every conversation you ever have about this repo. Express it
+> symbolically in `d` (and any other constants that survive) before you evaluate it.
+>
+> Sanity question with a one-line answer: at `T=256`, is this model's compute dominated by attention
+> or by the MLP? Most people's intuition about "transformers are attention" is wrong at short
+> context, and the formula tells you exactly where the intuition starts being right.
+>
+> **Gate: exact** against your Phase 0.6 counter for a single forward pass, modulo your declared
+> transcendental convention. Any mismatch is a bug in the counter or the derivation — find out
+> which before continuing, because Phase 4 is built entirely on these two agreeing.
+
+> **P1.4 — The memory table, at three context lengths.** For `B=32` and `T ∈ {256, 1024, 4096}`,
+> by hand: parameter bytes, activation bytes retained across the forward pass, and the `S` matrices
+> alone. Nine cells, symbolic then numeric.
+>
+> Then solve for `T` — algebraically, no binary search — at which `S` alone exceeds:
+> (a) all parameters, (b) 16 GB, (c) the memory of the GPU you actually own.
+>
+> The roadmap already tells you the answer at `B=32, H=4, T=4096` is 8.6 GB for one layer. Use that
+> as a check on your formula, not as a substitute for deriving it.
+>
+> **Gate: exact** against 1.9's output, and the three `T` values in closed form.
+
 **Phase 1 done when:** with weights transferred to the PyTorch oracle, `np.allclose(my_logits,
-torch_logits, atol=1e-5)` passes, and untrained loss is `4.17 ± 0.05`.
+torch_logits, atol=1e-5)` passes, untrained loss is `4.17 ± 0.05`, and P1.1–P1.4 are in
+`docs/notes/paper/01-counting.md` with their measured columns filled in and every discrepancy
+resolved.
 
 ---
 
@@ -484,6 +625,21 @@ Rules you'll use constantly:
 - `C = A + B` (broadcast) → `dA = dC`, `dB = dC.sum(over broadcast axes)`
 - `y = f(x)` elementwise → `dx = dy * f'(x)`
 - Two ops consumed the same tensor → **add** their gradients
+
+> **P2.1 — Why backward costs what it costs.** For a single `C = A @ B`, count the FLOPs in the
+> forward and in each of the two backward matmuls. State the backward:forward ratio as a small
+> integer, derived, not recalled.
+>
+> Then find the ops in your model that **violate** that ratio and say why in one line each: the
+> softmax backward, the embedding scatter-add, the LayerNorm backward, the fused cross-entropy.
+> Some are cheaper than the rule predicts, some aren't matmuls at all.
+>
+> Finally predict total FLOPs for one full training step (forward + backward + optimizer) as a
+> multiple of one forward pass, and as an absolute number at `B=32, T=256`.
+>
+> **Gate: within 10%** of the counter over a full step — modeling, not counting, because the
+> non-matmul ops make the clean ratio an approximation. If you're off by more than that, the
+> discrepancy is concentrated in one op; find which by diffing per-op counts.
 
 ## 2.1 Derive yourself: the softmax Jacobian
 
@@ -512,6 +668,18 @@ dS = P * (dP - (dP * P).sum(-1, keepdims=True))
 collapse happens is what lets you follow FlashAttention's backward, where the same expression
 appears but `P` has to be recomputed rather than read.
 
+> **P2.2 — Two adjacent lines, two different worlds.** Take `dS = P * (dP - (dP*P).sum(-1))` and
+> the very next line, `dQ = dS @ K`. For each: FLOPs, compulsory bytes, arithmetic intensity, all
+> in terms of `T` and `dh`. Compare both against your P0.2 achieved ridge point.
+>
+> **Predict the ratio between their two intensities before you compute either.** Then compute it.
+> These two lines sit next to each other in the same function, operate on the same `(B,H,T,T)`
+> tensor, and land on opposite sides of the ridge. That is the entire reason a fused attention
+> kernel is worth writing, and you can see it here, in Phase 2, with no GPU involved.
+>
+> **Gate: exact** on both intensities, and a one-sentence written statement of which one you'd have
+> to fix first to speed up the backward pass.
+
 ## 2.2 Derive yourself: attention backward
 
 Given `dO`, with cached `Q, K, V, P`:
@@ -536,6 +704,28 @@ whole forward pass of every layer.
 it** — trading FLOPs (which are cheap, you're bandwidth-bound) for HBM traffic (which is not).
 When you read that section of the paper, you'll already know exactly what it's avoiding. This
 derivation is your Phase 6.5 spec.
+
+> **P2.3 — The retention bill.** Do this on paper *before you write a single backward function*,
+> because the list you produce **is** the specification for what `forward` must return.
+>
+> Every tensor cached in the forward pass for use in the backward pass: name, shape, bytes, and the
+> point in the step at which it is last read. Sum it, at `T=1024, B=32`. That sum is peak activation
+> memory, and it is the reason activation checkpointing exists as a technique.
+>
+> Then the payoff question. Take the largest single cached tensor. If you *didn't* store it and
+> recomputed it in the backward pass instead:
+> - how many extra FLOPs does the recompute cost?
+> - how many bytes of traffic does not storing it save?
+> - form the ratio — extra FLOPs per byte saved — and compare it against your achieved ridge point
+>   from P0.2.
+>
+> If that ratio sits below the ridge, the trade is free: you are paying in the resource you have
+> spare to buy back the one you don't. **That comparison is the whole FlashAttention argument, and
+> you just made it in Phase 2, on paper, months before you write the kernel.** Write the conclusion
+> as one sentence with the two numbers in it, date it, and keep it — in Phase 4.6 you get to check
+> it against the paper.
+>
+> **Gate:** bytes exact; the FLOP/byte verdict stated in one sentence with numbers, not adjectives.
 
 **Mask handling:** zero the masked positions of `dS`, don't `-inf` them. Masked entries got
 `P = 0` in the forward pass, so they contributed nothing and receive nothing.
@@ -570,8 +760,9 @@ Bottom-up. Never move to the next op until the current one passes.
 `retain_grad()` on intermediates, and binary-search for the first tensor where your gradient
 diverges. The bug is in that op's backward.
 
-**Phase 2 done when:** every op passes `check_grad` at `<1e-5`, and every entry of your `grads`
-dict matches PyTorch's `.grad` at `atol=1e-5`.
+**Phase 2 done when:** every op passes `check_grad` at `<1e-5`, every entry of your `grads`
+dict matches PyTorch's `.grad` at `atol=1e-5`, and P2.1–P2.3 are written up with the retention
+bill's recompute-vs-store verdict stated numerically.
 
 ---
 
@@ -604,6 +795,20 @@ Don't decay LayerNorm gains, biases, or embeddings — only matmul weights.
 
 `β2 = 0.95` rather than the 0.999 default; shorter runs need faster adaptation.
 
+> **P3.1 — The optimizer's roofline.** AdamW touches four arrays per parameter: `p, g, m, v`. Per
+> step, symbolically: bytes moved, FLOPs performed, arithmetic intensity. Which side of the ridge?
+>
+> Then predict what fraction of wall-clock step time the optimizer should take if it ran at your
+> achieved bandwidth from P0.2. Commit to the number *before* timing it. At 5M params with
+> `B=32, T=256`, is it a rounding error or not? Guessing is not allowed here; the point is that the
+> answer follows from two numbers you already have.
+>
+> Then time it and compare. If your measurement is far off your prediction, the likely causes are
+> NumPy allocating a fresh temporary per line and the loop running per-key in Python — both of which
+> you will eliminate in Phase 5, so record the number now.
+>
+> **Gate: within 2×**, plus the AI exactly.
+
 ## 3.2 Schedule
 
 - Linear warmup over the first ~100 steps from 0 to `lr = 3e-4`
@@ -613,6 +818,22 @@ Don't decay LayerNorm gains, biases, or embeddings — only matmul weights.
 
 Warmup exists because Adam's `v` estimate is garbage for the first few dozen steps; taking full-
 size steps then can push you somewhere unrecoverable.
+
+> **P3.2 — The time budget, before your first real run.** You have per-step FLOPs from P2.1 and
+> achieved FLOP/s from P0.2. Divide. Predict seconds per step, and total wall time for 5000 steps.
+> Write it down, then run 10 steps and measure.
+>
+> `measured / predicted` is your **implementation efficiency**, and it will be embarrassing. That's
+> expected and it's the point: Phases 5 and 6 are a campaign to move that one number, and a campaign
+> needs a starting value.
+>
+> Then attribute the gap *before* profiling: list your top three suspected causes, ranked, with the
+> fraction of the gap you think each accounts for. Candidates worth considering — NumPy materializing
+> a temporary per line, single-threaded ops, memory-bound ops running at bandwidth rather than
+> compute, Python loop overhead per op. You'll check this list against a real profile in Phase 4.
+>
+> **Gate: within 2× on the time, and your ranked attribution written down before you profile.**
+> Being wrong about the ranking is fine and informative. Not committing to one is not.
 
 ## 3.3 The loop
 
@@ -653,6 +874,23 @@ the entire forward pass for every generated character, which is `O(n·T²)` and 
 Leave it wasteful. Phase 6.6 fixes it with a KV cache, and the waste is what makes that fix
 feel earned.
 
+> **P3.3 — Quantify the waste.** Count the FLOPs to generate 300 characters with this loop, at full
+> context. Express it as a multiple of one training step — a training step processes `B·T = 8192`
+> tokens, this generates 300, so the ratio should offend you.
+>
+> Now count what the same 300 characters would cost **with** a KV cache. You do not need to implement
+> it to count it: per new token you compute one row of `Q`, attend against `T` cached keys, and skip
+> every recomputation of the prefix. Write the FLOP expression for both and take the ratio.
+>
+> Then the more interesting half: with a KV cache, per generated token, how many **bytes** must be
+> read (weights + cache) and how many FLOPs performed? What's the arithmetic intensity, and which
+> side of the ridge is it on? Compare against the same quantity for a training step at `B=32`.
+> **Training and single-stream inference are not the same problem on the same hardware**, and this
+> exercise is where that stops being a slogan. Chapter 7 of the scaling book covers it; do the
+> arithmetic yourself first.
+>
+> **Gate: exact** on both FLOP counts; the AI comparison stated with numbers on both sides.
+
 ## 3.5 What a healthy run looks like
 
 | Step | Loss | Sample |
@@ -674,21 +912,51 @@ feel earned.
 
 **Phase 3 done when:** val loss ~1.5, generated text has speaker names and line structure, and a
 fixed seed reproduces the identical loss curve twice. **Save that curve and a fixed-seed sample
-to a file — they are Phase 5's acceptance test.**
+to a file — they are Phase 5's acceptance test.** P3.1–P3.3 written up, with the implementation
+efficiency number recorded somewhere you'll find it again in Phase 5.
 
 ---
 
 # Phase 4 — Roofline analysis
 
-*Estimated: 2–4 sessions. Output is a writeup, not code. This is the phase the whole project
-exists for.*
+*Estimated: 3–6 sessions. Output is a writeup, not code. This is the phase the whole project
+exists for, and it is almost entirely done with a pencil.*
+
+## 4.0 Ground rule for this entire phase: pencil first
+
+Everything in 4.1–4.3 gets filled in **by hand, symbolically then numerically, before you run the
+counter even once.** Then you run it and add a second column, and a third column with the ratio.
+
+This is not a stylistic preference. By Phase 4 you have a counter that will produce the whole table
+in about four seconds, and if you let it, you will read the numbers, nod, and retain nothing. The
+counter's job in this phase is to **grade you**, and a grader you consult before answering is not a
+grader. You've already done the hard version of every derivation in this phase during Phases 1–3;
+this is where they get assembled.
+
+Any row where hand and counter disagree by more than 5% is a bug in one of them. Find out which one
+before you move on — a wrong counter poisons every remaining phase, and a wrong derivation poisons
+you.
 
 ## 4.1 The per-op table
 
 For each op at `B=32, T=1024`: FLOPs, bytes moved, arithmetic intensity (FLOPs/byte), measured
 wall time.
 
-Expected shape of the result:
+> **P4.1 — Fill this in blank, in pencil, before running anything.** One row per op in a full
+> forward+backward step. Columns: FLOPs (symbolic), FLOPs (numeric), compulsory bytes, actual bytes
+> in *your* implementation, AI under each byte convention, **your predicted bound-by**, predicted
+> time at achieved peak. Commit the bound-by column before measuring — that's the falsifiable part.
+>
+> The template is in `docs/notes/paper/04-roofline.md`. Note the two byte columns: compulsory bytes
+> tell you what the *algorithm* demands, actual bytes what *your code* does. Ops where those two
+> differ by a lot are exactly the ops a fused kernel would fix, and reading that column is how you
+> generate the Phase 6 work list rather than being handed it.
+>
+> **Gate:** every FLOP and byte cell within 5% of the counter, every bound-by call correct, and for
+> any you got wrong, a written sentence on what you mis-modeled.
+
+Once your own table exists, here is the qualitative shape it should have. If one of your rows
+disagrees with this, one of the two is wrong — find out which, don't assume it's you:
 
 | Op | FLOPs | AI (FLOP/byte) | Bound by |
 |---|---|---|---|
@@ -709,6 +977,23 @@ Plot every op against it. Matmuls land right of the ridge. Softmax, the mask, an
 far to the left. **Attention as a composite is memory-bound, and structurally it shouldn't be** —
 it's `O(T²·dh)` FLOPs on `O(T·dh)` of input data.
 
+> **P4.2 — Draw the roofline by hand, on log-log graph paper, before you touch matplotlib.**
+> Two axes, one sloped segment, one flat segment, one corner. Place every op from P4.1 on it as a
+> point. Doing this once with a pencil is what makes the axes mean something; after that, plotting
+> it is a rendering step and you can generate the pretty version however you like.
+>
+> Then compute the ridge point by hand for **three** devices: the GPU you own, an A100, and a
+> current-generation part (H100, B200, or MI300X — pick one and cite the spec sheet). Tabulate
+> peak FLOP/s, peak GB/s, and ridge for each.
+>
+> Then the question that matters: **has the ridge point moved up or down across those generations,
+> and what does that imply for attention's memory-boundedness over time?** Answer in one sentence
+> with the trend number in it. This is the single most quoted fact in performance engineering and
+> almost everyone quoting it has never computed it. You will have computed it three times.
+>
+> **Gate:** three ridge points exact, the trend stated as a ratio, and a hand-drawn plot you'd be
+> willing to photograph and put in the repo.
+
 ## 4.3 Count the HBM round-trips
 
 In your implementation, for one attention head:
@@ -723,7 +1008,83 @@ In your implementation, for one attention head:
 Roughly **6–8 full passes over a `T²` array**, for an operation whose inputs are only `T×dh`. At
 `T=1024, dh=64` that's 16× more data movement than the inputs justify.
 
-## 4.4 Then, and only then, read the FlashAttention paper
+> **P4.3 — Count your own round-trips, separately for forward and backward.** Don't take the "6–8"
+> above on faith; it's an estimate of a *typical* implementation, and yours is sitting in
+> `np_impl/`. Read it line by line and count the passes it actually makes over a `T²` array.
+> Forward and backward get separate counts — the backward touches `P` and `dP` and `dS`, and its
+> number is larger.
+>
+> Then convert to bytes at `B=32, H=4, T=1024`, and divide by the bytes that a *perfect* kernel
+> would move — one read of `Q, K, V`, one write of `O`, and nothing else. That quotient is the
+> factor a fused kernel is playing for, and it is the number your Phase 6 benchmark table is
+> ultimately compared against.
+>
+> **Gate: exact** on the pass counts, and you can point at the specific line of `np_impl/model.py`
+> that causes each one.
+
+## 4.4 The closed-book estimation exam
+
+Everything up to here you did with your own code open. This is the same material with nothing open:
+no notes, no calculator beyond arithmetic, no code. **Ten minutes per question, written answers,
+two significant figures.**
+
+The format matters. This is how these questions actually arrive — in an interview, in a design
+review, in your own head at 2am deciding whether a kernel is worth three days. The skill being
+tested is not the algebra, which you've already done. It's whether the model is *loaded*, close
+enough to hand that you can run it without a reference.
+
+1. **Score memory at long context.** Model constants as above, `T = 8192`. How much HBM do the
+   score matrices need for one forward pass across all `L` layers, if nothing is freed? Now the
+   same question if each layer frees its `S` before the next one starts. Which of those two numbers
+   describes your NumPy implementation, and why?
+
+2. **The attention fraction.** What fraction of total model FLOPs is attention at `T = 256`,
+   `1024`, `8192`? Sketch the curve on the back of the page, label the asymptotes, and mark the
+   crossover you derived in P1.2.
+
+3. **Reshaping the model.** You double `d` and halve `L`. For each of parameter count, forward
+   FLOPs, and peak activation memory: up, down, or flat, and by what factor? Three answers, one
+   line of reasoning each. Then: which of those three would you have gotten wrong a month ago?
+
+4. **A machine you've never used.** 3 TB/s HBM, 1000 TFLOP/s fp16 dense. Ridge point? Your `T=1024`
+   attention layer, on a kernel achieving 40% of peak *bandwidth* — how long does it take? Same
+   kernel achieving 40% of peak *compute* — how long? Which of those two numbers is meaningful for
+   this workload, and why is the other one a category error?
+
+5. **Amdahl on your own table.** Your softmax kernel reaches 60% of peak bandwidth. Using your P4.1
+   table, what is the maximum possible remaining speedup for the *whole attention block* if softmax
+   became instantaneous? What does that tell you about where to spend Phase 6?
+
+6. **The fusion prize.** Fusing QKᵀ + scale + mask + softmax + PV into one kernel at
+   `B=32, H=4, T=1024, dh=64`: how many bytes of HBM traffic does that eliminate? Express it as a
+   multiple of the traffic that remains, not as an absolute — absolutes don't transfer between
+   machines and ratios do.
+
+7. **Batch size and the regime boundary.** At what batch size does your training step stop being
+   dominated by fixed per-kernel overhead and start being bandwidth-bound on your hardware? You'll
+   need a per-kernel launch/dispatch overhead estimate; state the one you're assuming and where it
+   came from.
+
+8. **Tile sizes, from capacity alone.** An SM has 48 KB of usable shared memory. fp32. You need a
+   `Q` tile of `Bq × dh`, `K` and `V` tiles of `Bk × dh`, the running softmax state (`m` and `l`,
+   one each per row of the `Q` tile), and the output accumulator. Write the capacity inequality and
+   solve for the largest `Bq = Bk`. Now redo it in fp16. Now redo it with double buffering on the
+   `K`/`V` tiles.
+
+   **That last answer is the tile size you will use in Phase 6.4**, and you just derived it from
+   nothing but a capacity constraint, months before writing the kernel. When you eventually read
+   FlashAttention's tile-size discussion, you will recognize the inequality rather than learn it.
+
+**Gate: 6 of 8 within 2×, closed book.** For any you miss, you must be able to reconstruct the
+answer after seeing only the setup line again — if you can't, the model isn't loaded and the fix is
+to redo the corresponding paper exercise, not to reread the answer.
+
+Retake it before Phase 6 starts. The second sitting should be noticeably easier, and if it isn't,
+that's worth knowing before you spend twenty sessions writing CUDA.
+
+## 4.6 Then, and only then, read the FlashAttention paper
+
+*(numbered 4.6, not 4.5, so it's never confused with Phase 4.5 below.)*
 
 You will have independently derived its motivation. The paper stops being a clever trick and
 becomes a description of the solution to a problem you personally measured.
@@ -732,9 +1093,29 @@ This is the same roofline reasoning that justified halo tiling in your heat-diff
 you fused passes to avoid re-reading global memory. Attention is that problem one level up, with
 a softmax in the middle that makes the fusion non-obvious.
 
-**Phase 4 done when:** you have the AI table, the roofline plot, the round-trip count, and a
-paragraph in your own words predicting what an optimal attention kernel would do — written
-*before* you read the paper. Then read it and diff your prediction against theirs.
+> **P4.6 — The prediction must contain numbers.** Before opening the paper, your written prediction
+> of what an optimal attention kernel does has to commit to at least four quantities:
+>
+> 1. HBM traffic of the fused kernel, as a fraction of your Phase 4.3 count
+> 2. Predicted speedup on the forward pass at `T=1024`, and separately at `T=4096` — the scaling
+>    with `T` is the interesting half, and a single number hides it
+> 3. Arithmetic intensity of the fused kernel, and which side of the ridge it lands on
+> 4. What the backward pass has to do differently, and what that costs in extra FLOPs (you derived
+>    this in P2.3 — go get the sentence you wrote and date-check yourself)
+>
+> A prediction with no numbers in it is a vibe, and vibes are not falsifiable. The whole value of
+> this phase is that you can be *measurably* wrong here and then find out exactly where.
+>
+> Then read the paper and fill in a third column from their reported figures. Anything you missed by
+> more than 2×: write a paragraph on what your model was missing. Anything you got right: note that
+> too, because in Phase 6 you'll be tempted to believe the paper over your own analysis, and the
+> record of where your analysis was already correct is what will stop you.
+
+**Phase 4 done when:** you have the AI table (hand column and measured column, reconciled), the
+hand-drawn roofline plus the plotted one, the round-trip count, a passing score on the closed-book
+exam, and a paragraph in your own words predicting what an optimal attention kernel would do —
+written *before* you read the paper, with numbers in it. Then read it and diff your prediction
+against theirs.
 
 ---
 
@@ -784,6 +1165,19 @@ XLA_FLAGS="--xla_dump_to=./xla_dump --xla_dump_hlo_pass_re=.*" python model.py
 
 ## 4.5.3 What to look for
 
+> **P4.5.1 — Predict the compiler, on paper, before you dump anything.** Write down, in advance:
+> how many kernels attention becomes after XLA optimizes it; which specific ops fuse into which;
+> the shape and size of the largest buffer that survives; and total HBM traffic for the fused
+> version, as a fraction of your Phase 4.3 hand count.
+>
+> Then dump the HLO and score yourself line by line. **Predicting a compiler's output is a distinct
+> skill from predicting hardware**, and it's the one a compiler-engineering role actually tests. Two
+> sessions of doing this badly is worth more than a month of reading about fusion passes.
+>
+> **Gate: kernel count within ±2, and every fusion you predicted either confirmed or explained.**
+> Where XLA fused something you didn't expect, work out what property of the dataflow graph made it
+> legal — that's the reusable lesson, not the specific fusion.
+
 Work through the optimized HLO and answer these in writing:
 
 1. **Which ops got fused?** Look for `fusion` instructions and read their contents. Expect the
@@ -820,8 +1214,9 @@ itself: it's a concrete, measured statement about the boundary of what fusion pa
 - `jax.grad` your forward pass and diff against your Phase 2 hand-derived gradients. Free extra
   oracle, and now it isn't a crutch because you've already done the work.
 
-**Phase 4.5 done when:** you have optimized HLO dumps, an annotated fusion map for attention, and
-a written argument for why the `T×T` materialization survives every optimization pass.
+**Phase 4.5 done when:** you have optimized HLO dumps, an annotated fusion map for attention, your
+scored P4.5.1 prediction, and a written argument for why the `T×T` materialization survives every
+optimization pass.
 
 ---
 
@@ -871,6 +1266,46 @@ other side of it: you're the one who has to decide where every byte lives, when 
 whether a transpose costs anything. Profile before and after — the allocation overhead in a naive
 version is not small.
 
+> **P5.1 — Size the arena on paper.** Every buffer that must be simultaneously live at the moment
+> of peak usage — which is somewhere in the backward pass, and part of the exercise is working out
+> exactly where. Sum the bytes. That number is your arena size.
+>
+> You already did most of this as P2.3's retention bill; this adds the transient buffers that only
+> exist within one op. Get it wrong low and you segfault; get it wrong high and you've quietly
+> wasted memory you'll want at `T=1024`.
+>
+> Then: what is the **theoretical minimum** arena, if you were willing to aggressively reuse
+> buffers whose last read has passed? Express the gap as a percentage. That gap is what a real
+> memory planner in a compiler does for you, and having the number makes the next paragraph of any
+> XLA buffer-assignment documentation you read actually mean something.
+>
+> **Gate: exact** on the naive sum; the tight bound within 10%, checked against your allocator's
+> high-water mark.
+
+> **P5.2 — Cache blocking, from capacity.** Same exercise as exam question 8, one level down the
+> memory hierarchy and on hardware you own. Using your P0.2 cache sizes: what is the largest tile
+> of the `(T,dh) × (dh,T)` matmul whose working set fits in L1? In L2? Write the capacity
+> inequality, solve it, and predict the resulting GFLOP/s from the tile's arithmetic intensity and
+> your achieved bandwidth at that level of the hierarchy.
+>
+> Then implement and measure. This is exactly the analysis behind the tiled matmul in your
+> `cuda-kernels` repo — same inequality, different constants. You have benchmark numbers from that
+> project; check whether the same reasoning reproduces them.
+>
+> **Gate: within 2× on predicted GFLOP/s**, and if you're outside that, the profiler tells you
+> which term you dropped.
+
+> **P5.3 — Predict the port's speedup before you run it.** Where will C++ beat NumPy, where will it
+> tie, and where might it *lose*? Give a factor for each of: matmuls, elementwise ops, the softmax,
+> the optimizer step, per-op Python overhead. Remember that NumPy's matmul calls into BLAS, which
+> is not code you're going to beat by hand — being honest about that in advance is the point.
+>
+> Then check against P3.2's implementation-efficiency number: how much of that gap did the port
+> actually close?
+>
+> **Gate: within 2× per category**, with the categories where you predicted "no gain" correctly
+> identified. Predicting where you *won't* win is the harder and more valuable half.
+
 ## 5.3 Tape-based autograd
 
 ```cpp
@@ -897,8 +1332,8 @@ Op by op, diffing against the NumPy reference at each step:
 Reuse the blocked/tiled matmul from your `cuda-kernels` Phase 1 CPU baselines.
 
 **Phase 5 done when:** same seed → identical loss curve → identical generated text as Phase 3
-(bit-identical is unrealistic across languages; match to 1e-4 and eyeball the sample), and a
-profiler confirms no allocations in the training loop.
+(bit-identical is unrealistic across languages; match to 1e-4 and eyeball the sample), a
+profiler confirms no allocations in the training loop, and P5.1–P5.3 are scored.
 
 ---
 
@@ -909,8 +1344,30 @@ profiler confirms no allocations in the training loop.
 Each step gets a benchmark row in the same format as your stencil and matmul results:
 GB/s achieved, % of peak, speedup over previous.
 
+> **P6.0 — Every kernel gets a prediction column. No exceptions, and the prediction is written
+> before the kernel is.** For each of 6.1–6.6, on paper, before you open the editor: FLOPs,
+> compulsory bytes, arithmetic intensity, which side of the ridge, predicted runtime at your
+> device's *achieved* peak (from P0.2), and predicted speedup over the previous step.
+>
+> Then implement, measure, and add the achieved columns. Your benchmark table has a **predicted**
+> column beside every measured one, all the way down.
+>
+> **A kernel you cannot predict within 2× before writing is a kernel you do not understand yet.**
+> When you're outside 2×, the difference between "my model was wrong" and "my kernel is bad" is
+> itself the finding — occupancy, launch overhead, uncoalesced access, and bank conflicts all live
+> in that gap, and they are much easier to recognize when you arrived with a number in hand.
+>
+> This is also the deliverable that makes the repo interesting to read. Anyone can post a benchmark
+> table; a benchmark table with a prediction column and honest post-mortems on the misses is
+> evidence of a mental model, which is the thing being hired for.
+
 **6.1 Naive attention.** Separate kernels for QKᵀ, scale, mask, softmax, PV. This is your baseline
 and it should be embarrassing. Measure it honestly — it's what everything else is compared against.
+
+> **P6.1** — before writing it, predict its total HBM traffic and its runtime. You counted the
+> round-trips for the NumPy version in P4.3; this is the same count on different hardware. That
+> number is the target 6.2–6.4 spend the rest of the phase chipping away at, so it needs to exist
+> on paper first, not be discovered afterwards.
 
 **6.2 Fused softmax kernel.** One block per row, warp-level shuffle reductions for max and sum,
 then a broadcast divide. Self-contained lesson in reductions. Expect a large speedup — you just
@@ -921,10 +1378,35 @@ new element exceeds the running max, rescale the accumulated sum by `exp(m_old �
 **Implement and test this in isolation before putting it inside anything.** It's the load-bearing
 idea and you don't want to debug it inside a tiled kernel.
 
+> **P6.3 — Prove it on paper before you code it.** Two parts, and neither takes more than half a
+> page:
+> 1. **Exactness.** Show that processing the row in tiles, carrying `(m, l)` and rescaling on every
+>    max update, gives *identically* the same result as the single-pass version in exact arithmetic.
+>    Induction over tiles. If you can't write this proof, you will not be able to debug the kernel,
+>    because you won't know whether a mismatch is a bug or expected drift.
+> 2. **Error.** In fp32, bound the relative error of the online version against the two-pass one.
+>    Which is actually more accurate, and why? The answer is not the one most people guess, and it
+>    determines what tolerance you should be testing at in 6.4.
+>
+> **Gate:** the induction written out, and a numerically justified test tolerance — a number you
+> derived, not one you tuned until the test passed.
+
 **6.4 FlashAttention forward.** Load a `Q` tile into shared memory. Stream `K`/`V` tiles past it.
 For each `K` tile: compute the partial scores, update the online softmax state, and rescale the
 output accumulator. **`S` is never written to HBM.** You now have every prerequisite — shared-
 memory tiling from the stencil, reductions from 6.2, online softmax from 6.3.
+
+> **P6.4 — Go get exam question 8.** You derived the tile size from the shared-memory capacity
+> inequality back in Phase 4. Redo it now with the real constraints you didn't have then: your
+> actual SMEM per SM, your register budget, and a target occupancy. Does the answer move?
+>
+> Then predict, before measuring: what happens to runtime if you **halve** the tile size? There are
+> two competing effects — one about how many times `K` and `V` get re-read from HBM, one about
+> occupancy and latency hiding — and your prediction has to name both and say which wins. Then
+> build both versions and measure.
+>
+> Being wrong here is common and instructive. Being wrong *without having predicted* teaches you
+> nothing, because you'll retrofit an explanation to whichever number came out larger.
 
 **6.5 FlashAttention backward.** Recompute `S` from `Q` and `K` in-kernel rather than reading a
 stored `P`. Your Phase 2.2 derivation is the spec. Harder than the forward — budget for it.
@@ -934,13 +1416,68 @@ you process one token at a time, so there's no batch dimension to amortize the w
 purely bandwidth-limited on reading the weights. Good contrast, and it fixes the `O(n·T²)`
 generation from Phase 3.4.
 
+> **P6.6 — Predict tokens/second from bandwidth alone.** Per generated token you must read every
+> weight once plus the KV cache. Bytes ÷ achieved GB/s = seconds per token, and that is the *entire*
+> model — no FLOPs in it anywhere. Compute it, then measure, then explain the gap.
+>
+> Then: how does it change at batch size 32 instead of 1? Weight bytes stay fixed, cache bytes and
+> FLOPs scale with batch. Write throughput and per-token latency as functions of batch size and find
+> where the curve bends. **Batching is free until it isn't, and the bend is where.**
+>
+> You did the small version of this in P3.3. This is the same calculation on real hardware, and it's
+> the one that generalizes to every inference-serving argument you'll ever read.
+>
+> **Gate: within 2×** on single-stream tokens/sec, and the batching curve sketched with the knee
+> located.
+
 **6.7 (optional) Pallas comparison.** Reimplement 6.4 in Pallas, JAX's Triton-like kernel DSL.
 Roughly 40 lines against your 400. Benchmark both and write up the gap. Good "when is the
 abstraction worth it" argument for a repo README. **Strictly after the raw CUDA, never instead of
 it** — the hand-written kernel is the artifact that matters for an NVIDIA target.
 
 **Phase 6 done when:** your CUDA attention matches the NumPy reference to fp32 tolerance, and the
-benchmark table shows naive → fused softmax → tiled with real numbers.
+benchmark table shows naive → fused softmax → tiled with **a predicted column beside every measured
+one**, plus a written post-mortem for every prediction that missed by more than 2×.
+
+---
+
+# Appendix — Paper exercise index
+
+Every exercise, its gate, and what it feeds. Nothing here takes more than a session; several take
+twenty minutes. The `docs/notes/paper/` worksheets hold the blank templates.
+
+| # | Phase | Exercise | Kind | Gate | Feeds |
+|---|---|---|---|---|---|
+| P0.1 | 0.6 | Costing conventions: FMA, transcendentals, compulsory vs actual bytes | counting | conventions fixed before any `count()` call | everything |
+| P0.2 | 0.6 | Hardware sheet + ridge point, spec and achieved | modeling | ridge point from memory | P2.3, P3.2, P4.2, P6.0 |
+| P1.1 | 1.1 | Parameter count per tensor, symbolic then numeric | counting | exact | P1.4, exam Q3 |
+| P1.2 | 1.5 | Transpose traffic vs score-matrix traffic; find the crossover | counting | exact | P4.3 |
+| P1.3 | 1.9 | Forward FLOPs split into `T²` and `T` terms; solve the crossover | counting | exact | P2.1, P4.1, exam Q2 |
+| P1.4 | 1.9 | Memory table at three context lengths; solve for `T` at three thresholds | counting | exact | P4.1, exam Q1 |
+| P2.1 | 2.0 | Backward:forward FLOP ratio, derived; the ops that violate it | modeling | within 10% | P3.2, P4.1 |
+| P2.2 | 2.1 | AI of softmax backward vs `dS @ K`, two adjacent lines | counting | exact | P4.1 |
+| P2.3 | 2.2 | Retention bill; recompute-vs-store FLOP/byte vs ridge | counting | bytes exact, verdict numeric | **P4.6, 6.5** |
+| P3.1 | 3.1 | AdamW's arithmetic intensity and its share of step time | modeling | within 2× | P5.1 |
+| P3.2 | 3.2 | Predicted step time; implementation efficiency; ranked attribution | modeling | within 2× | P5.3 |
+| P3.3 | 3.4 | Generation FLOPs, with and without a KV cache; the AI comparison | counting | exact | P6.6 |
+| P4.1 | 4.1 | The full per-op table, hand column before counter column | counting | 5% per cell, bound-by correct | all of Phase 6 |
+| P4.2 | 4.2 | Hand-drawn roofline; ridge point for three devices; the trend | modeling | ridge exact, trend as ratio | P6.0 |
+| P4.3 | 4.3 | Round-trip count over `T²`, forward and backward separately | counting | exact, line-attributed | P6.1 |
+| **P4.4** | **4.4** | **Closed-book estimation exam, 8 questions** | mixed | **6/8 within 2×** | retake before Phase 6 |
+| P4.6 | 4.6 | Numeric FlashAttention prediction, then diff against the paper | modeling | 4 numbers committed pre-read | Phase 6 |
+| P4.5.1 | Ph 4.5.3 | Predict XLA's fusion output before dumping HLO | modeling | kernel count ±2 | the 4.5.4 writeup |
+| P5.1 | 5.2 | Arena sizing; naive sum and the tight bound | counting | exact / 10% | the allocator |
+| P5.2 | 5.2 | Cache-blocking inequality per level; predicted GFLOP/s | modeling | within 2× | P6.4 |
+| P5.3 | 5.4 | Where C++ beats NumPy, where it ties, where it loses | modeling | within 2× per category | — |
+| P6.0 | 6 | A prediction column for every kernel, written before the kernel | modeling | within 2× or a post-mortem | the benchmark table |
+| P6.1 | 6.1 | Naive kernel HBM traffic and runtime | modeling | within 2× | 6.2–6.4 targets |
+| P6.3 | 6.3 | Prove online softmax exact by induction; bound the fp32 error | counting | proof written, tolerance derived | 6.4 test suite |
+| P6.4 | 6.4 | Tile size from real SMEM/register/occupancy limits; halve-the-tile | modeling | both effects named | the kernel |
+| P6.6 | 6.6 | Tokens/sec from bandwidth alone; the batching knee | modeling | within 2× | — |
+
+**If you only do five of these:** P0.2, P1.3, P2.3, P4.1, P4.4. That subset alone gets you to a
+defensible answer for "why is attention slow and what would you do about it," which is the question
+the whole project is training you to answer without looking anything up.
 
 ---
 
@@ -961,6 +1498,12 @@ benchmark table shows naive → fused softmax → tiled with real numbers.
 - **PyTorch `nn.Linear` stores weights transposed** as `(out, in)`. Your oracle transfer will hit
   this.
 - **Use `approximate='tanh'` for GELU** in the oracle to match your implementation.
+- **Never run the counter before the pencil.** Once you've seen a number you can't un-see it, and
+  the exercise is gone. There is no way to recover it later.
+- **Don't silently change a costing convention mid-project.** If you do change one, redo every
+  affected number and date the change in `00-conventions.md`.
+- **Counting exercises are exact; modeling exercises are 2×.** Applying the wrong bar in either
+  direction is how you end up either chasing float noise or accepting a real bug.
 
 ---
 
@@ -1022,4 +1565,7 @@ non-matmul parts, and that's a hardware-design fact, not an implementation detai
   AllGather/ReduceScatter, when communication overtakes computation. Your project never touches
   that. The overlap is Chapters 1, 4, 7, and 12.
 - **Do the exercises.** Chapters 1 and 4 have worked problems. You have a model you can check them
-  against, which almost no other reader does. Use that.
+  against, which almost no other reader does. Use that — work each of their problems with your own
+  constants substituted in, and when their analytic result and your measured counter disagree, that
+  disagreement is a better exercise than the problem was. Their Chapter 4 is essentially P1.3 and
+  P1.4 done by someone else; do yours first, then read theirs as a marking scheme.

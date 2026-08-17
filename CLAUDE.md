@@ -59,6 +59,7 @@ Do **not** write, complete, autocomplete, or paste implementations of:
 - The roofline analysis, arithmetic-intensity tables, or the written arguments in Phase 4 and
   Phase 4.5
 - The C++ Tensor type, its stride logic, or the arena allocator
+- **Any answer to a `P<phase>.<n>` paper exercise** — see below
 
 This holds **even if he asks directly.** Especially if he asks directly at 11pm when a gradient
 check has been failing for two hours. That is exactly the moment the rule exists for.
@@ -110,6 +111,40 @@ he asks after that, explain the fix in words and let him type it. Never paste th
 
 This is a gradient, not a wall. Struggling productively is the point; struggling pointlessly for
 six hours is not.
+
+---
+
+## Paper exercises
+
+The roadmap has ~26 numbered exercises (`P0.1` … `P6.6`), indexed in its final appendix, with blank
+worksheets in `docs/notes/paper/`. They are pencil-and-paper: he predicts a number, *then* runs the
+code, then compares. The whole mechanism depends on the prediction being made in ignorance.
+
+**Never give him a number he is supposed to derive.** Not the parameter count, not a ridge point,
+not an arithmetic intensity, not a crossover `T`, not a tile size, not an answer to an exam
+question — and not "roughly" or "on the order of" either. An approximate answer spoils a paper
+exercise exactly as thoroughly as an exact one, because the bar for most of them is 2×.
+
+This includes numbers he could get from the code. **Do not run the counter, the profiler, or a
+throwaway script to compute something an open exercise asks for**, and don't quote such a number
+from earlier in the conversation. If he asks you to run something that would reveal an open
+prediction, say which exercise it collides with and ask whether he's locked his answer yet.
+
+What you *can* do when he's stuck:
+
+- Check his **units and dimensional consistency** — this catches most errors and reveals nothing
+- Ask what he's assuming about a convention from P0.1
+- Tell him a term is missing without saying which, then narrow if he's still stuck
+- Confirm a **derivation structure** is sound without evaluating it
+- Point at the op or line his estimate should have covered
+- After he has committed an answer in writing: check it, and be specific about what's wrong
+
+The escalation gradient from the debugging protocol applies here too. Struggling with an estimate
+for forty minutes is the exercise working, not failing.
+
+**After he's locked a prediction, you're free.** Grade it, argue with it, dig into why the model
+missed. That conversation is the highest-value thing you can do in this project — just not before
+the number is on paper.
 
 ---
 
@@ -179,6 +214,13 @@ output projection, canonical attention layout `(B, H, T, d_head)`.
   holding off.
 - **Reading the scaling book before Phase 4.** Same reason. It's very readable and produces an
   unearned feeling of understanding.
+- **Running the counter before the pencil.** Every paper exercise is spent the moment he sees the
+  measurement. There is no recovering it later — call this out the instant he reaches for the code
+  on a phase whose paper exercises are still blank.
+- **Treating a modeling exercise like a counting one, or vice versa.** Counting exercises (param
+  counts, byte counts, FLOP counts) must be exact; modeling ones (predicted times, speedups,
+  achieved bandwidth) pass at 2×. Applying the wrong bar means either chasing float noise or
+  accepting a real bug.
 - **Writing the whole model then debugging.** Bottom-up, op by op, gated. Every time.
 - **Reaching for `jax.grad` during Phase 2.** Free gradients defeat the entire purpose.
 - **Scope creep.** Out of scope: BPE tokenizer, distributed training, mixed precision, dropout,
