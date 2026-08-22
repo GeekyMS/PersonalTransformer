@@ -3,3 +3,5 @@ __pycache__/
 .venv/
 .DS_Store
 *.pkl
+/CLAUDE.md
+/docs/roadmap.md
