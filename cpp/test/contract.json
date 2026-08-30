@@ -1,0 +1,15 @@
+{
+  "_comment": "One entry per op you port. Fill in as you go — add the entry when you write the op, not before. 'inputs'/'output' shapes use the project constants (B=32, T=256, V~65, d=256, H=4, d_head=64, L=6). np_ref points at the exact numpy function whose intermediate this should match.",
+  "_example": {
+    "op": "layer_norm",
+    "np_ref": "np_impl.model.layer_norm",
+    "inputs": {
+      "x": [32, 256, 256],
+      "g": [256],
+      "b": [256]
+    },
+    "output": [32, 256, 256],
+    "atol": 1e-4
+  },
+  "ops": []
+}
