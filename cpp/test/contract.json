@@ -11,5 +11,16 @@
     "output": [32, 256, 256],
     "atol": 1e-4
   },
-  "ops": []
+  "ops": [
+    {
+      "op": "matmul",
+      "np_ref": "np_impl.ops_ref.matmul",
+      "inputs": {
+        "A": [8, 16],
+        "B": [16, 4]
+      },
+      "output": [8, 4],
+      "atol": 1e-4
+    }
+  ]
 }

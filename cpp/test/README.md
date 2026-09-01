@@ -10,10 +10,12 @@ Op by op, diffed against the NumPy reference at each step:
    - dumps the output via `dump_binary()` to `cpp/test/dumps/<name>_output.bin`
 3. Add an entry to `cpp/test/contract.json` naming the op, its NumPy reference
    function, and the shapes of every input/output.
-4. Generate the input dumps from Python (random or fixed-seed data, written with
-   `.tofile()`), run the C++ test binary, then:
+4. Generate the input dumps: `python cpp/test/gen_inputs.py <op_name>` (fixed-seed
+   random data per contract.json, written with `.tofile()`). Run the C++ test
+   binary (`./cpp/build/op_<name>`), then, from the repo root, with it on
+   `PYTHONPATH` so `np_impl` resolves:
    ```
-   python cpp/test/compare.py <op_name>
+   PYTHONPATH=. python cpp/test/compare.py <op_name>
    ```
 5. Only move to the next op once this passes.
 
