@@ -21,6 +21,63 @@
       },
       "output": [8, 4],
       "atol": 1e-4
+    },
+    {
+      "op": "embed",
+      "np_ref": "np_impl.ops_ref.embed",
+      "inputs": {
+        "x": [6],
+        "tok_emb": [6, 4],
+        "pos_emb": [3, 4]
+      },
+      "int_inputs": {
+        "x": 6
+      },
+      "output": [2, 3, 4],
+      "atol": 1e-4
+    },
+    {
+      "op": "layer_norm",
+      "np_ref": "np_impl.ops_ref.layer_norm",
+      "inputs": {
+        "x": [5, 4],
+        "g": [4],
+        "b": [4]
+      },
+      "output": [5, 4],
+      "atol": 1e-4
+    },
+    {
+      "op": "add_bias",
+      "np_ref": "np_impl.ops_ref.add_bias",
+      "inputs": {
+        "x": [5, 4],
+        "b": [4]
+      },
+      "output": [5, 4],
+      "atol": 1e-4
+    },
+    {
+      "op": "gelu",
+      "np_ref": "np_impl.ops_ref.gelu",
+      "inputs": {
+        "x": [5, 4]
+      },
+      "output": [5, 4],
+      "atol": 1e-4
+    },
+    {
+      "op": "mlp",
+      "np_ref": "np_impl.ops_ref.mlp",
+      "inputs": {
+        "x": [5, 4],
+        "W1": [4, 16],
+        "b1": [16],
+        "W2": [16, 4],
+        "b2": [4]
+      },
+      "output": [5, 4],
+      "atol": 1e-4
     }
   ]
 }

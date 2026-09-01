@@ -4,6 +4,8 @@
 
 #include <vector>
 
+#include "arena.h"
+
 struct Tensor {
     float*           data;     // not owned
     std::vector<int> shape;
@@ -33,4 +35,11 @@ struct Tensor {
     // decide what that condition is and assert it for now (copying reshape
     // can come later if you need it).
     Tensor reshape(const std::vector<int>& new_shape) const;
+
+    Tensor slice(const std::vector<int> fixed_indices) const;
 };
+
+// Allocates a fresh Tensor's data (and, if needs_grad, a zeroed grad buffer
+// of the same size) from arena. Convenience for building intermediates that
+// ops write into and read gradients from — see docs/roadmap.md Phase 5.4.
+Tensor make_tensor(Arena& arena, const std::vector<int>& shape, bool needs_grad = true);

@@ -76,3 +76,31 @@ Tensor Tensor::reshape(const std::vector<int>& new_shape) const {
 
     return res;
 }
+
+Tensor make_tensor(Arena& arena, const std::vector<int>& shape, bool needs_grad) {
+    int total = 1;
+    for (int s : shape) total *= s;
+
+    Tensor t(arena.alloc(total), shape);
+    if (needs_grad) {
+        t.grad = arena.alloc(total);
+        for (int i = 0; i < total; i++) t.grad[i] = 0.0f;
+    }
+    return t;
+}
+
+Tensor slice(std::vector<int> fixed_indices){
+    int old_offset = this->offset;
+    int new_offset = old_offset;
+
+    int temp = 0;
+
+    for(int k = 0; k < fixed_indices.size(); k++){
+        temp += this->strides[k] * fixed_indices[i];
+    }
+    new_offset += temp
+
+
+
+    Tensor res = Tensor(t.data, )
+}

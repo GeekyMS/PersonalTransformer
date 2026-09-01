@@ -2,6 +2,11 @@
 as raw float32 .bin files the C++ test binary loads via load_binary(). See
 README.md for the full protocol.
 
+An input listed in the contract entry's optional "int_inputs" map (name ->
+exclusive upper bound) is generated as whole-number floats in [0, bound)
+instead of normal(0,1) — for things like token indices, which the C++ side
+casts back to int after loading (dump.h only speaks float32).
+
 Usage: python gen_inputs.py <op_name> [--dump-dir cpp/test/dumps] [--seed 0]
 """
 import argparse
@@ -27,8 +32,12 @@ def main():
     dump_dir.mkdir(parents=True, exist_ok=True)
 
     rng = np.random.default_rng(args.seed)
+    int_inputs = entry.get("int_inputs", {})
     for name, shape in entry["inputs"].items():
-        arr = rng.normal(0, 1, shape).astype(np.float32)
+        if name in int_inputs:
+            arr = rng.integers(0, int_inputs[name], shape).astype(np.float32)
+        else:
+            arr = rng.normal(0, 1, shape).astype(np.float32)
         arr.tofile(dump_dir / f"{args.op_name}_input_{name}.bin")
         print(f"wrote {name} {shape} -> {args.op_name}_input_{name}.bin")
 
