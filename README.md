@@ -7,8 +7,7 @@ hardware constraints rather than a clever trick.
 
 Each implementation is validated against the previous one (same seed → same loss curve), and the
 NumPy version is itself validated op-by-op and gradient-by-gradient against a PyTorch reference
-model. See [`docs/roadmap.md`](docs/roadmap.md) for the full phase-by-phase plan, paper-exercise
-protocol, and design rationale — this file is a snapshot of where the build currently stands.
+model.
 
 ## Model
 
