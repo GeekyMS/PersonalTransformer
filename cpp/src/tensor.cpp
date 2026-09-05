@@ -89,18 +89,22 @@ Tensor make_tensor(Arena& arena, const std::vector<int>& shape, bool needs_grad)
     return t;
 }
 
-Tensor slice(std::vector<int> fixed_indices){
+Tensor Tensor::slice(const std::vector<int> fixed_indices) const {
     int old_offset = this->offset;
     int new_offset = old_offset;
 
     int temp = 0;
 
-    for(int k = 0; k < fixed_indices.size(); k++){
-        temp += this->strides[k] * fixed_indices[i];
+    for(int k = 0; k < (int)fixed_indices.size(); k++){
+        temp += this->strides[k] * fixed_indices[k];
     }
-    new_offset += temp
+    new_offset += temp;
 
+    int siz = fixed_indices.size();
+    std::vector<int> newStrides(this->strides.begin() + siz, this->strides.end());
+    std::vector<int> newShape(this->shape.begin() + siz, this->shape.end());
 
-
-    Tensor res = Tensor(t.data, )
+    Tensor res = Tensor(this->data, newShape, newStrides, new_offset);
+    res.grad = this->grad;
+    return res;
 }
