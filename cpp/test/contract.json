@@ -78,6 +78,51 @@
       },
       "output": [5, 4],
       "atol": 1e-4
+    },
+    {
+      "op": "softmax",
+      "np_ref": "np_impl.ops_ref.softmax",
+      "inputs": {
+        "S": [3, 4, 5]
+      },
+      "output": [3, 4, 5],
+      "atol": 1e-4
+    },
+    {
+      "op": "softmax_backward",
+      "np_ref": "np_impl.ops_ref.softmax_backward",
+      "inputs": {
+        "S": [3, 4, 5],
+        "dP": [3, 4, 5]
+      },
+      "output": [3, 4, 5],
+      "atol": 1e-4
+    },
+    {
+      "op": "attention_core",
+      "np_ref": "np_impl.ops_ref.attention_core",
+      "inputs": {
+        "x": [2, 3, 4],
+        "Wq": [4, 4],
+        "Wk": [4, 4],
+        "Wv": [4, 4]
+      },
+      "output": [2, 3, 4],
+      "atol": 1e-4
+    },
+    {
+      "op": "attention_core_backward",
+      "np_ref": "np_impl.ops_ref.attention_core_grads",
+      "inputs": {
+        "x": [2, 3, 4],
+        "Wq": [4, 4],
+        "Wk": [4, 4],
+        "Wv": [4, 4],
+        "dOut": [2, 3, 4]
+      },
+      "_comment": "output = concat(dx.ravel(), dWq.ravel(), dWk.ravel(), dWv.ravel()) = 24+16+16+16",
+      "output": [72],
+      "atol": 1e-4
     }
   ]
 }

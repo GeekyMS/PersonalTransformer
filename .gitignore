@@ -7,3 +7,4 @@ __pycache__/
 /docs/roadmap.md
 /cpp/build/
 cpp/test/dumps/*.bin
+visualizations/media/

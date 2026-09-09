@@ -41,6 +41,7 @@ Tensor Tensor::transpose(int i, int j) const {
     newStrides[j] = this->strides[i];
 
     Tensor res = Tensor(this->data, newShape, newStrides, this->offset);
+    res.grad = this->grad;
     return res;
 }
 
@@ -73,6 +74,7 @@ Tensor Tensor::reshape(const std::vector<int>& new_shape) const {
     }
 
     Tensor res = Tensor(this->data, new_shape, newStrides, this->offset);
+    res.grad = this->grad;
 
     return res;
 }

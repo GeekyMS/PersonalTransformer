@@ -29,3 +29,7 @@ void gelu(const Tensor& x, Tensor& out);
 // allocates its own intermediates from arena.
 void mlp(Arena& arena, const Tensor& x, const Tensor& W1, const Tensor& b1,
           const Tensor& W2, const Tensor& b2, Tensor& out);
+
+void softmax(const Tensor& S, Tensor& out);
+
+void attention_core(Arena& arena, Tensor& x, Tensor& Wk, Tensor& Wq, Tensor& Wv, Tensor& out);

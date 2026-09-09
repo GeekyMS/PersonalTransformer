@@ -3,6 +3,7 @@
 
 #include <cmath>
 #include <stdexcept>
+#include <limits>
 
 void matmul(const Tensor& A, const Tensor& B, Tensor& out) {
     if(A.shape[1] != B.shape[0]){
@@ -213,3 +214,110 @@ void mlp(Arena& arena, const Tensor& x, const Tensor& W1, const Tensor& b1,
     matmul(h, W2, h2);
     add_bias(h2, b2, out);
 }
+
+void softmax(const Tensor& S, Tensor& out){
+    int totalRows = 1;
+    for(int k = 0; k < (int)S.shape.size() - 1; k++){
+        totalRows *= S.shape[k];
+    }
+    std::vector<int> newShape = {totalRows, S.shape[S.shape.size() - 1]};
+    Tensor v = S.reshape(newShape);
+    Tensor newOut = out.reshape(newShape);
+    for(int i = 0; i < v.shape[0]; i++){
+        float maxx = -std::numeric_limits<float>::infinity();
+        for(int j = 0; j < v.shape[1]; j++){
+            maxx = std::max(maxx, v.at({i, j}));
+        }
+
+        for(int j = 0; j < v.shape[1]; j++){
+            newOut.at({i, j}) = v.at({i, j}) - maxx;
+        }
+        float total = 0.0f;
+        for(int j = 0; j < v.shape[1]; j++){
+            newOut.at({i, j}) = std::exp(newOut.at({i, j}));
+            total += newOut.at({i, j});
+        }
+
+        for(int j = 0; j < v.shape[1]; j++){
+            newOut.at({i, j}) /= total;
+        }
+    }
+
+    tape_push([newOut, v]() {
+        for(int i = 0; i < newOut.shape[0]; i++){
+            float total = 0.0f;
+            for(int j = 0; j < newOut.shape[1]; j++){
+                total += newOut.at({i, j}) * newOut.grad_at({i, j});
+            }
+
+            for(int j = 0; j < newOut.shape[1]; j++){
+                float P = newOut.at({i, j});
+                float dP = newOut.grad_at({i, j});
+                v.grad_at({i, j}) += P * dP - P * total;
+            }
+        }
+    });
+}
+
+void attention_core(Arena& arena, Tensor& x, Tensor& Wk, Tensor& Wq, Tensor& Wv, Tensor& out){
+    int B = x.shape[0];
+
+    for(int b = 0; b < B; b++){
+        Tensor xb = x.slice({b});
+        Tensor outb = out.slice({b});
+
+        Tensor Q = make_tensor(arena, {x.shape[1], Wq.shape[1]});
+        Tensor K = make_tensor(arena, {x.shape[1], Wk.shape[1]});
+        Tensor V = make_tensor(arena, {x.shape[1], Wv.shape[1]});
+        std::vector newShape({x.shape[1], x.shape[1]});
+        Tensor QKT = make_tensor(arena, newShape);
+        Tensor S = make_tensor(arena, QKT.shape);
+        
+        matmul(xb, Wq, Q);
+        matmul(xb, Wk, K);
+        matmul(xb, Wv, V);
+
+        Tensor KT = K.transpose(K.shape.size() - 1, K.shape.size() - 2);
+
+        matmul(Q, KT, QKT);
+
+
+        for(int i = 0; i < QKT.shape[0]; i++){
+            for(int j = 0; j < QKT.shape[1]; j++){
+                    S.at({i, j}) = QKT.at({i, j}) / std::sqrt(x.shape[x.shape.size() - 1]);
+            }
+        }
+
+        tape_push([S, QKT, x](){
+            for(int i = 0; i < QKT.shape[0]; i++){
+                for(int j = 0; j < QKT.shape[1]; j++){
+                        QKT.grad_at({i, j}) += S.grad_at({i, j}) / std::sqrt(x.shape[x.shape.size() - 1]);
+                }
+            }
+        });
+
+        Tensor P = make_tensor(arena, S.shape);
+
+        for(int i = 0; i < S.shape[0]; i++){
+            for(int j = i + 1; j < S.shape[1]; j++){
+                S.at({i, j}) = -std::numeric_limits<float>::infinity();
+            }
+        }
+
+        tape_push([S](){
+            for(int i = 0; i < S.shape[0]; i++){
+                for(int j = 0; j < S.shape[1]; j++){
+                    if(j > i){
+                        S.grad_at({i, j}) = 0;
+                    }
+                }
+            }
+        });
+
+        softmax(S, P);
+
+        matmul(P, V, outb);
+    }
+
+}
+
