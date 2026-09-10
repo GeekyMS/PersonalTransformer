@@ -1,5 +1,7 @@
 import pickle
 import csv
+import os
+import time
 
 import numpy as np
 
@@ -74,15 +76,26 @@ def generate(p, prompt, n, rng, temp=0.8, top_k=40):
     return decode(idx)
 
 
-def train(max_steps=5000, B=32, T_=256, seed=0,
-          ckpt_path='checkpoint.pkl', log_path='loss_log.csv'):
+def train(max_steps=5000, B=32, T_=256, seed=0, out_dir='bench/numpy_run',
+          ckpt_path=None, log_path=None, sample_path=None):
+    # Separate output dir per implementation (numpy vs cpp) so a run of one
+    # never clobbers the other's loss_log/checkpoint/sample -- lets
+    # bench/plot_loss.py (or a manual diff) compare them side by side.
+    os.makedirs(out_dir, exist_ok=True)
+    ckpt_path = ckpt_path or os.path.join(out_dir, 'checkpoint.pkl')
+    log_path = log_path or os.path.join(out_dir, 'loss_log.csv')
+    sample_path = sample_path or os.path.join(out_dir, 'fixed_seed_sample.txt')
+
     rng = np.random.default_rng(seed)
     p = init_params(rng)
     m = {k: np.zeros_like(v) for k, v in p.items()}
     v = {k: np.zeros_like(val) for k, val in p.items()}
 
     with open(log_path, 'w', newline='') as f:
-        csv.writer(f).writerow(['step', 'train_loss', 'val_loss'])
+        csv.writer(f).writerow(['step', 'train_loss', 'val_loss', 'elapsed_sec'])
+
+    train_start = time.time()
+    last_log = train_start
 
     for step in range(max_steps):
         x, y = get_batch('train', B, T_, rng)
@@ -93,20 +106,32 @@ def train(max_steps=5000, B=32, T_=256, seed=0,
         adam_step(p, grads, m, v, step + 1, lr_at(step, max_steps))
 
         if step % 100 == 0:
+            now = time.time()
+            sec_per_step = (now - last_log) / 100 if step > 0 else (now - train_start)
+            last_log = now
             val_loss = evaluate(p, 'val', B, T_, rng)
-            print(f"{step}: train {loss:.4f}  val {val_loss:.4f}", flush=True)
+            print(f"{step}: train {loss:.4f}  val {val_loss:.4f}  "
+                  f"({sec_per_step:.3f} s/step, {now - train_start:.1f}s elapsed)", flush=True)
             with open(log_path, 'a', newline='') as f:
-                csv.writer(f).writerow([step, float(loss), val_loss])
+                csv.writer(f).writerow([step, float(loss), val_loss, now - train_start])
         if step % 500 == 0:
             print(generate(p, prompt="\n", n=300, rng=rng), flush=True)
             save_checkpoint(p, ckpt_path)   # periodic checkpoint -- crash/interrupt safety net
 
     save_checkpoint(p, ckpt_path)   # final save
 
+    total_elapsed = time.time() - train_start
+    with open(os.path.join(out_dir, 'timing.txt'), 'w') as f:
+        f.write(f"max_steps={max_steps}\n")
+        f.write(f"total_elapsed_sec={total_elapsed:.2f}\n")
+        f.write(f"sec_per_step={total_elapsed / max_steps:.4f}\n")
+    print(f"total training time: {total_elapsed:.1f}s "
+          f"({total_elapsed / max_steps:.4f} s/step)", flush=True)
+
     # fixed-seed sample -- this is explicitly your Phase 5 acceptance test per the roadmap
     fixed_rng = np.random.default_rng(1234)
     sample = generate(p, prompt="\n", n=500, rng=fixed_rng)
-    with open('fixed_seed_sample.txt', 'w') as f:
+    with open(sample_path, 'w') as f:
         f.write(sample)
 
     return p

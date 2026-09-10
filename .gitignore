@@ -8,3 +8,4 @@ __pycache__/
 /cpp/build/
 cpp/test/dumps/*.bin
 visualizations/media/
+bench/*/checkpoint.bin

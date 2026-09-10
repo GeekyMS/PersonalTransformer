@@ -1,6 +1,8 @@
 #!/bin/bash
 #SBATCH --job-name=transformer-cpp-train
 #SBATCH --partition=cpu
+#SBATCH --constraint=amd7763
+#SBATCH --exclusive
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH -c 4

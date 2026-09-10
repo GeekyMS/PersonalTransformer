@@ -4,8 +4,10 @@
 // zero allocations in the steady-state loop (the whole point of Arena).
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <random>
 #include <sstream>
@@ -385,12 +387,21 @@ int main() {
     std::vector<Param> params = collect_params(p);
     AdamState adam = make_adam_state(params);
 
-    const std::string log_path = "loss_log.csv";
-    const std::string ckpt_path = "checkpoint.bin";
+    // Separate output dir from np_impl/train.py's (bench/numpy_run) so a run
+    // of one implementation never clobbers the other's loss_log/checkpoint/
+    // sample -- lets bench/plot_loss.py (or a manual diff) compare them.
+    const std::string out_dir = "bench/cpp_run";
+    std::filesystem::create_directories(out_dir);
+    const std::string log_path = out_dir + "/loss_log.csv";
+    const std::string ckpt_path = out_dir + "/checkpoint.bin";
     {
         std::ofstream f(log_path);
-        f << "step,train_loss,val_loss\n";
+        f << "step,train_loss,val_loss,elapsed_sec\n";
     }
+
+    using clock = std::chrono::steady_clock;
+    auto train_start = clock::now();
+    auto last_log = train_start;
 
     for (int step = 0; step < kMaxSteps; step++) {
         std::vector<int> x, y;
@@ -415,10 +426,16 @@ int main() {
         adam_step(params, adam, step + 1, lr_at(step, kMaxSteps));
 
         if (step % 100 == 0) {
+            auto now = clock::now();
+            double sec_per_step = std::chrono::duration<double>(now - last_log).count() / (step > 0 ? 100 : 1);
+            double total_elapsed = std::chrono::duration<double>(now - train_start).count();
+            last_log = now;
+
             float val_loss = evaluate(p, arena, d.val_ids, rng);
-            std::printf("%d: train %.4f  val %.4f\n", step, loss.at({0}), val_loss);
+            std::printf("%d: train %.4f  val %.4f  (%.3f s/step, %.1fs elapsed)\n",
+                        step, loss.at({0}), val_loss, sec_per_step, total_elapsed);
             std::ofstream f(log_path, std::ios::app);
-            f << step << "," << loss.at({0}) << "," << val_loss << "\n";
+            f << step << "," << loss.at({0}) << "," << val_loss << "," << total_elapsed << "\n";
         }
         if (step % 500 == 0) {
             std::string sample = generate(p, arena, d, "\n", 300, rng);
@@ -429,10 +446,19 @@ int main() {
 
     save_checkpoint(params, ckpt_path);
 
+    double total_elapsed = std::chrono::duration<double>(clock::now() - train_start).count();
+    {
+        std::ofstream f(out_dir + "/timing.txt");
+        f << "max_steps=" << kMaxSteps << "\n";
+        f << "total_elapsed_sec=" << total_elapsed << "\n";
+        f << "sec_per_step=" << (total_elapsed / kMaxSteps) << "\n";
+    }
+    std::printf("total training time: %.1fs (%.4f s/step)\n", total_elapsed, total_elapsed / kMaxSteps);
+
     // Fixed-seed sample -- the actual Phase 5 acceptance test per CLAUDE.md.
     std::mt19937 fixed_rng(1234);
     std::string sample = generate(p, arena, d, "\n", 500, fixed_rng);
-    std::ofstream out("fixed_seed_sample.txt");
+    std::ofstream out(out_dir + "/fixed_seed_sample.txt");
     out << sample;
 
     return 0;
