@@ -11,12 +11,8 @@
 
 set -euo pipefail
 
-# Unity modules are versioned (module load <name>/<version>) -- run
-# `module avail cmake gcc` on Unity to find the exact strings available on
-# your account, then fill these in. Leaving unversioned `module load cmake`/
-# `module load gcc` may fail or silently pick an unexpected default.
-module load cmake/<version>
-module load gcc/<version>
+module load cmake/3.28.3-heynjv2
+module load gcc/9.4.0
 
 cd "$SLURM_SUBMIT_DIR"
 
