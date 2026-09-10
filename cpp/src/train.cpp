@@ -9,6 +9,7 @@
 #include <fstream>
 #include <random>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -30,11 +31,18 @@ struct Dataset {
 
 Dataset load_dataset(const std::string& path) {
     std::ifstream f(path);
+    if (!f) {
+        throw std::runtime_error("load_dataset: could not open '" + path +
+                                  "' (cwd matters -- this is relative to wherever the binary is run from)");
+    }
     std::stringstream ss;
     ss << f.rdbuf();
 
     Dataset d;
     d.text = ss.str();
+    if (d.text.empty()) {
+        throw std::runtime_error("load_dataset: '" + path + "' opened but is empty");
+    }
 
     bool seen[256] = {false};
     for (unsigned char c : d.text) seen[c] = true;
@@ -78,6 +86,13 @@ std::vector<int> encode(const Dataset& d, const std::string& s) {
 // window, y is the same window shifted one position (next-token targets).
 void get_batch(const std::vector<int>& data, std::mt19937& rng,
                 std::vector<int>& x, std::vector<int>& y) {
+    if (data.size() < (size_t)kT + 2) {
+        // data.size() - kT - 2 is size_t (unsigned) -- if data is too small
+        // this underflows to a huge number instead of going negative, and
+        // uniform_int_distribution silently accepts it, handing out
+        // wildly-out-of-bounds indices later. Fail loudly here instead.
+        throw std::runtime_error("get_batch: dataset too small for kT=" + std::to_string(kT));
+    }
     std::uniform_int_distribution<size_t> pick(0, data.size() - kT - 2);
     x.resize(kB * kT);
     y.resize(kB * kT);
