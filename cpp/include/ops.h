@@ -33,3 +33,16 @@ void mlp(Arena& arena, const Tensor& x, const Tensor& W1, const Tensor& b1,
 void softmax(const Tensor& S, Tensor& out);
 
 void attention_core(Arena& arena, Tensor& x, Tensor& Wk, Tensor& Wq, Tensor& Wv, Tensor& out);
+
+void attention(Arena& arena, Tensor& x, Tensor& Wk, Tensor& Wq, Tensor& Wv, Tensor& Wo, int H, Tensor& out);
+
+// Fused softmax + cross-entropy, mirroring np_impl.model.cross_entropy's
+// numerically-stable logsumexp form (and np_impl.backward.cross_entropy_backward
+// for the shortcut backward: dlogits = (softmax(logits) - onehot(y)) / N).
+// logits: (N,V) where N = B*T (flatten the batch/time axes before calling).
+// targets: flat token ids, length N. out: scalar loss, shape {1}.
+// TODO(you): implement forward (logsumexp - true_class_logit, mean over N)
+// and push the fused backward closure onto the tape.
+void cross_entropy(const Tensor& logits, const std::vector<int>& targets, Tensor& out);
+
+void add(const Tensor& x, const Tensor& y, Tensor& out);

@@ -321,3 +321,142 @@ void attention_core(Arena& arena, Tensor& x, Tensor& Wk, Tensor& Wq, Tensor& Wv,
 
 }
 
+void attention(Arena& arena, Tensor& x, Tensor& Wk, Tensor& Wq, Tensor& Wv, Tensor& Wo, int H, Tensor& out){
+    Tensor temp_out = make_tensor(arena, out.shape);
+    int B = x.shape[0];
+
+    for(int b = 0; b < B; b++){
+        Tensor xb = x.slice({b});
+        Tensor reshaped_out = temp_out.reshape({out.shape[0], out.shape[1], H, out.shape[2] / H});
+        Tensor outb = reshaped_out.slice({b});
+
+        Tensor Q = make_tensor(arena, {x.shape[1], Wq.shape[1]});
+        Tensor K = make_tensor(arena, {x.shape[1], Wk.shape[1]});
+        Tensor V = make_tensor(arena, {x.shape[1], Wv.shape[1]});
+
+        matmul(xb, Wq, Q);
+        matmul(xb, Wk, K);
+        matmul(xb, Wv, V);
+
+        Tensor reshaped_Q = Q.reshape({Q.shape[0], H, Q.shape[1] / H});
+        Tensor reshaped_K = K.reshape({K.shape[0], H, K.shape[1] / H});
+        Tensor reshaped_V = V.reshape({V.shape[0], H, V.shape[1] / H});
+
+        Tensor transposed_Q = reshaped_Q.transpose(0, 1);
+        Tensor transposed_K = reshaped_K.transpose(0, 1);
+        Tensor transposed_V = reshaped_V.transpose(0, 1);
+
+        for(int h = 0; h < H; h++){
+            Tensor outbh = outb.transpose(0, 1).slice({h});
+            std::vector newShape({x.shape[1], x.shape[1]});
+            Tensor QKT = make_tensor(arena, newShape);
+            Tensor S = make_tensor(arena, QKT.shape);
+
+            Tensor Qh = transposed_Q.slice({h});
+            Tensor Kh = transposed_K.slice({h});
+            Tensor Vh = transposed_V.slice({h});
+
+            Tensor KT = Kh.transpose(Kh.shape.size() - 1, Kh.shape.size() - 2);
+
+            matmul(Qh, KT, QKT);
+
+
+            for(int i = 0; i < QKT.shape[0]; i++){
+                for(int j = 0; j < QKT.shape[1]; j++){
+                        S.at({i, j}) = QKT.at({i, j}) / std::sqrt(x.shape[x.shape.size() - 1] / H);
+                }
+            }
+
+            tape_push([S, QKT, x, H](){
+                for(int i = 0; i < QKT.shape[0]; i++){
+                    for(int j = 0; j < QKT.shape[1]; j++){
+                            QKT.grad_at({i, j}) += S.grad_at({i, j}) / std::sqrt(x.shape[x.shape.size() - 1] / H);
+                    }
+                }
+            });
+
+            Tensor P = make_tensor(arena, S.shape);
+
+            for(int i = 0; i < S.shape[0]; i++){
+                for(int j = i + 1; j < S.shape[1]; j++){
+                    S.at({i, j}) = -std::numeric_limits<float>::infinity();
+                }
+            }
+
+            tape_push([S](){
+                for(int i = 0; i < S.shape[0]; i++){
+                    for(int j = 0; j < S.shape[1]; j++){
+                        if(j > i){
+                            S.grad_at({i, j}) = 0;
+                        }
+                    }
+                }
+            });
+
+            softmax(S, P);
+
+            matmul(P, Vh, outbh);
+
+        }
+    }
+    Tensor out2d = out.reshape({out.shape[0] * out.shape[1], out.shape[2]});
+    matmul(temp_out.reshape({temp_out.shape[0] * temp_out.shape[1], temp_out.shape[2]}), Wo, out2d);
+}
+
+void cross_entropy(const Tensor& logits, const std::vector<int>& targets, Tensor& out) {
+    int N = logits.shape[0];
+    int V = logits.shape[1];
+
+    float total_loss = 0.0f;
+    for (int i = 0; i < N; i++) {
+        float maxx = -std::numeric_limits<float>::infinity();
+        for (int j = 0; j < V; j++) {
+            maxx = std::max(maxx, logits.at({i, j}));
+        }
+
+        float sum_exp = 0.0f;
+        for (int j = 0; j < V; j++) {
+            sum_exp += std::exp(logits.at({i, j}) - maxx);
+        }
+        float logsumexp = maxx + std::log(sum_exp);
+
+        total_loss += logsumexp - logits.at({i, targets[i]});
+    }
+    out.at({0}) = total_loss / N;
+
+    tape_push([logits, targets, N, V]() {
+        for (int i = 0; i < N; i++) {
+            float maxx = -std::numeric_limits<float>::infinity();
+            for (int j = 0; j < V; j++) {
+                maxx = std::max(maxx, logits.at({i, j}));
+            }
+            float sum_exp = 0.0f;
+            for (int j = 0; j < V; j++) {
+                sum_exp += std::exp(logits.at({i, j}) - maxx);
+            }
+
+            for (int j = 0; j < V; j++) {
+                float p = std::exp(logits.at({i, j}) - maxx) / sum_exp;
+                float onehot = (j == targets[i]) ? 1.0f : 0.0f;
+                logits.grad_at({i, j}) += (p - onehot) / N;
+            }
+        }
+    });
+}
+
+void add(const Tensor& x, const Tensor& y, Tensor& out){
+    for(int i = 0; i < x.shape[0]; i++){
+        for(int j = 0; j < x.shape[1]; j++){
+            out.at({i, j}) = x.at({i, j}) + y.at({i, j});
+        }
+    }
+
+    tape_push([x, y, out]() {
+        for(int i = 0; i < x.shape[0]; i++){
+            for(int j = 0; j < x.shape[1]; j++){
+                x.grad_at({i, j}) += out.grad_at({i, j}); 
+                y.grad_at({i, j}) += out.grad_at({i, j});
+        }
+    }
+    });
+}

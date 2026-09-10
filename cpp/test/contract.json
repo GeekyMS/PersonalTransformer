@@ -123,6 +123,86 @@
       "_comment": "output = concat(dx.ravel(), dWq.ravel(), dWk.ravel(), dWv.ravel()) = 24+16+16+16",
       "output": [72],
       "atol": 1e-4
+    },
+    {
+      "op": "attention",
+      "np_ref": "np_impl.ops_ref.attention_h2",
+      "_comment": "H=2 fixed, see np_impl.ops_ref.attention_h2",
+      "inputs": {
+        "x": [2, 3, 4],
+        "Wq": [4, 4],
+        "Wk": [4, 4],
+        "Wv": [4, 4],
+        "Wo": [4, 4]
+      },
+      "output": [2, 3, 4],
+      "atol": 1e-4
+    },
+    {
+      "op": "attention_backward",
+      "np_ref": "np_impl.ops_ref.attention_h2_grads",
+      "_comment": "H=2 fixed. output = concat(dx, dWq, dWk, dWv, dWo).ravel() = 24+16+16+16+16",
+      "inputs": {
+        "x": [2, 3, 4],
+        "Wq": [4, 4],
+        "Wk": [4, 4],
+        "Wv": [4, 4],
+        "Wo": [4, 4],
+        "dOut": [2, 3, 4]
+      },
+      "output": [88],
+      "atol": 1e-4
+    },
+    {
+      "op": "block",
+      "np_ref": "np_impl.ops_ref.block",
+      "_comment": "H=4 (kH from constants.h), d=4 so d_head=1",
+      "inputs": {
+        "x": [2, 3, 4],
+        "ln1_g": [4], "ln1_b": [4],
+        "Wq": [4, 4], "Wk": [4, 4], "Wv": [4, 4], "Wo": [4, 4],
+        "ln2_g": [4], "ln2_b": [4],
+        "W1": [4, 6], "b1": [6], "W2": [6, 4], "b2": [4]
+      },
+      "output": [2, 3, 4],
+      "atol": 1e-4
+    },
+    {
+      "op": "block_backward",
+      "np_ref": "np_impl.ops_ref.block_grads",
+      "_comment": "output = concat(dx, dln1_g, dln1_b, dWq, dWk, dWv, dWo, dln2_g, dln2_b, dW1, db1, dW2, db2) = 24+4+4+16+16+16+16+4+4+24+6+24+4 = 162",
+      "inputs": {
+        "x": [2, 3, 4],
+        "ln1_g": [4], "ln1_b": [4],
+        "Wq": [4, 4], "Wk": [4, 4], "Wv": [4, 4], "Wo": [4, 4],
+        "ln2_g": [4], "ln2_b": [4],
+        "W1": [4, 6], "b1": [6], "W2": [6, 4], "b2": [4],
+        "dOut": [2, 3, 4]
+      },
+      "output": [162],
+      "atol": 1e-4
+    },
+    {
+      "op": "cross_entropy",
+      "np_ref": "np_impl.ops_ref.cross_entropy",
+      "inputs": {
+        "logits": [6, 5],
+        "y": [6]
+      },
+      "int_inputs": { "y": 5 },
+      "output": [1],
+      "atol": 1e-4
+    },
+    {
+      "op": "cross_entropy_backward",
+      "np_ref": "np_impl.ops_ref.cross_entropy_backward",
+      "inputs": {
+        "logits": [6, 5],
+        "y": [6]
+      },
+      "int_inputs": { "y": 5 },
+      "output": [6, 5],
+      "atol": 1e-4
     }
   ]
 }
