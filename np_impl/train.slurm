@@ -26,6 +26,9 @@ module load python/3.11.7
 
 cd "$SLURM_SUBMIT_DIR"
 
-python3 -c "import numpy" 2>/dev/null || pip install --user numpy
+if [ ! -x .venv/bin/python3 ]; then
+    python3 -m venv .venv
+    .venv/bin/pip install numpy
+fi
 
-PYTHONPATH=. python3 -m np_impl.train
+PYTHONPATH=. .venv/bin/python3 -m np_impl.train
