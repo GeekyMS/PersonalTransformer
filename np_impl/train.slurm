@@ -23,6 +23,7 @@ set -euo pipefail
 # numpy is importable after loading (`python3 -c "import numpy"`) -- if not,
 # you likely need a venv or a stack/scipy module alongside the bare python one.
 module load python/3.11.7
+module load py-numpy/1.26.4-kogk3x3
 
 cd "$SLURM_SUBMIT_DIR"
 
