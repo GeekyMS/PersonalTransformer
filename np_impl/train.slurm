@@ -22,7 +22,7 @@ set -euo pipefail
 # on your account -- same reasoning as cmake/gcc in cpp/train.slurm. Confirm
 # numpy is importable after loading (`python3 -c "import numpy"`) -- if not,
 # you likely need a venv or a stack/scipy module alongside the bare python one.
-module load python/<version>
+module load python/3.11.7
 
 cd "$SLURM_SUBMIT_DIR"
 
