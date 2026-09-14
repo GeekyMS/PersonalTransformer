@@ -6,7 +6,7 @@
 #SBATCH --ntasks=1
 #SBATCH -c 4
 #SBATCH --mem=16G
-#SBATCH --time=24:00:00
+#SBATCH --time=3-00:00:00
 #SBATCH --output=slurm-%j.out
 #SBATCH --error=slurm-%j.err
 
@@ -17,6 +17,16 @@
 # (see roadmap P5.3), not something to normalize away.
 
 set -euo pipefail
+
+# Cap BLAS threading to what SLURM actually allocated (-c 4). Without this,
+# OpenBLAS defaults to the node's full physical core count and oversubscribes
+# the 4 cores we were cgroup'd into -- especially bad on a shared (non
+# --exclusive) node where every other job's BLAS is doing the same thing.
+# This does NOT normalize away the multithreaded-BLAS comparison (still 4
+# threads, matching -c 4); it just stops threads fighting each other 1-to-N.
+export OMP_NUM_THREADS="$SLURM_CPUS_PER_TASK"
+export OPENBLAS_NUM_THREADS="$SLURM_CPUS_PER_TASK"
+export MKL_NUM_THREADS="$SLURM_CPUS_PER_TASK"
 
 # Fill in with whatever `module avail python` / `module spider python` shows
 # on your account -- same reasoning as cmake/gcc in cpp/train.slurm. Confirm

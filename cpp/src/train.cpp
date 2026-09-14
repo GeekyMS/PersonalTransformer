@@ -434,12 +434,16 @@ int main() {
             float val_loss = evaluate(p, arena, d.val_ids, rng);
             std::printf("%d: train %.4f  val %.4f  (%.3f s/step, %.1fs elapsed)\n",
                         step, loss.at({0}), val_loss, sec_per_step, total_elapsed);
+            std::fflush(stdout);   // printf is fully buffered when redirected to a file
+                                    // (slurm-%j.out) -- flush so progress shows up live,
+                                    // matching train.py's print(..., flush=True)
             std::ofstream f(log_path, std::ios::app);
             f << step << "," << loss.at({0}) << "," << val_loss << "," << total_elapsed << "\n";
         }
         if (step % 500 == 0) {
             std::string sample = generate(p, arena, d, "\n", 300, rng);
             std::printf("%s\n", sample.c_str());
+            std::fflush(stdout);
             save_checkpoint(params, ckpt_path);
         }
     }
