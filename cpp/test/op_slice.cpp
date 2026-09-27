@@ -26,14 +26,14 @@ int main() {
 
     for (int i = 0; i < T; i++) {
         for (int j = 0; j < D; j++) {
-            assert(xs.at({i, j}) == x.at({1, 2, i, j}));
+            assert(xs.at(std::array<int, 2>{i, j}) == x.at(std::array<int, 4>{1, 2, i, j}));
         }
     }
 
     // grad must alias the parent's buffer: writing through the slice should
     // be visible through the parent at the same logical index.
-    xs.grad_at({0, 0}) = 42.0f;
-    assert(x.grad_at({1, 2, 0, 0}) == 42.0f);
+    xs.grad_at(std::array<int, 2>{0, 0}) = 42.0f;
+    assert(x.grad_at(std::array<int, 4>{1, 2, 0, 0}) == 42.0f);
 
     // Fixing a single leading axis should drop just that one: (H,T,D).
     Tensor xb = x.slice({1});
