@@ -1,6 +1,7 @@
 #include "ops.h"
 #include "tape.h"
 
+#include <array>
 #include <cmath>
 #include <stdexcept>
 #include <limits>
@@ -10,34 +11,37 @@ void matmul(const Tensor& A, const Tensor& B, Tensor& out) {
         throw std::runtime_error("matmul: shapes do not match");
     }
     
+    #pragma omp parallel for
     for(int i = 0; i < A.shape[0]; i++){
         for(int j = 0; j < B.shape[1]; j++){
             float temp = 0.0f;
             for(int k = 0; k < B.shape[0]; k++){
-                temp += A.at({i, k}) * B.at({k, j});
+                temp += A.at(std::array<int, 2>{i, k}) * B.at(std::array<int, 2>{k, j});
             }
-            out.at({i, j}) = temp;
+            out.at(std::array<int, 2>{i, j}) = temp;
         }
     }
 
     tape_push([A, B, out]() {
+        #pragma omp parallel for
         for(int i = 0; i < (int)A.shape[0]; i++){
             for(int k = 0; k < (int)A.shape[1]; k++){
-                float dA = A.grad_at({i, k});
+                float dA = A.grad_at(std::array<int, 2>{i, k});
                 for(int j = 0; j < (int)B.shape[1]; j++){
-                    dA += out.grad_at({i, j}) * B.at({k, j});
+                    dA += out.grad_at(std::array<int, 2>{i, j}) * B.at(std::array<int, 2>{k, j});
                 }
-                A.grad_at({i, k}) = dA;
+                A.grad_at(std::array<int, 2>{i, k}) = dA;
             }
         }
 
+        #pragma omp parallel for
         for(int k = 0; k < (int)B.shape[0]; k++){
             for(int j = 0; j < (int)B.shape[1]; j++){
-                float dB = B.grad_at({k, j});
+                float dB = B.grad_at(std::array<int, 2>{k, j});
                 for(int i = 0; i < (int)A.shape[0]; i++){
-                    dB += out.grad_at({i, j}) * A.at({i, k});
+                    dB += out.grad_at(std::array<int, 2>{i, j}) * A.at(std::array<int, 2>{i, k});
                 }
-                B.grad_at({k, j}) = dB;
+                B.grad_at(std::array<int, 2>{k, j}) = dB;
             }
         }
     });
@@ -52,7 +56,7 @@ void embed(const std::vector<int>& x, const Tensor& tok_emb, const Tensor& pos_e
     for(int b = 0; b < B; b++){
         for(int t = 0; t < T; t++){
             for(int k = 0; k < d; k++){
-                out.at({b, t, k}) = tok_emb.at({x[b * T + t], k}) + pos_emb.at({t, k});
+                out.at(std::array<int, 3>{b, t, k}) = tok_emb.at(std::array<int, 2>{x[b * T + t], k}) + pos_emb.at(std::array<int, 2>{t, k});
             }
         }
     }
@@ -65,8 +69,8 @@ void embed(const std::vector<int>& x, const Tensor& tok_emb, const Tensor& pos_e
         for(int b = 0; b < B; b++){
             for(int t = 0; t < T; t++){
                 for(int k = 0; k < d; k++){
-                    tok_emb.grad_at({x[b * T + t], k}) += out.grad_at({b, t, k});
-                    pos_emb.grad_at({t, k}) += out.grad_at({b, t, k});
+                    tok_emb.grad_at(std::array<int, 2>{x[b * T + t], k}) += out.grad_at(std::array<int, 3>{b, t, k});
+                    pos_emb.grad_at(std::array<int, 2>{t, k}) += out.grad_at(std::array<int, 3>{b, t, k});
                 }
             }
         }
@@ -80,13 +84,13 @@ void layer_norm(const Tensor& x, const Tensor& g, const Tensor& b, Tensor& out, 
     for(int i = 0; i < N; i++){
         float mu = 0.0f;
         for(int k = 0; k < d; k++){
-            mu += x.at({i, k});
+            mu += x.at(std::array<int, 2>{i, k});
         }
         mu /= d;
 
         float var = 0.0f;
         for(int k = 0; k < d; k++){
-            float diff = x.at({i, k}) - mu;
+            float diff = x.at(std::array<int, 2>{i, k}) - mu;
             var += diff * diff;
         }
         var /= d;
@@ -94,8 +98,8 @@ void layer_norm(const Tensor& x, const Tensor& g, const Tensor& b, Tensor& out, 
         float sigma = std::sqrt(var + eps);
 
         for(int k = 0; k < d; k++){
-            float xhat = (x.at({i, k}) - mu) / sigma;
-            out.at({i, k}) = g.at({k}) * xhat + b.at({k});
+            float xhat = (x.at(std::array<int, 2>{i, k}) - mu) / sigma;
+            out.at(std::array<int, 2>{i, k}) = g.at(std::array<int, 1>{k}) * xhat + b.at(std::array<int, 1>{k});
         }
     }
 
@@ -109,13 +113,13 @@ void layer_norm(const Tensor& x, const Tensor& g, const Tensor& b, Tensor& out, 
             // avoids threading a separate cache tensor through the tape.
             float mu = 0.0f;
             for(int k = 0; k < d; k++){
-                mu += x.at({i, k});
+                mu += x.at(std::array<int, 2>{i, k});
             }
             mu /= d;
 
             float var = 0.0f;
             for(int k = 0; k < d; k++){
-                float diff = x.at({i, k}) - mu;
+                float diff = x.at(std::array<int, 2>{i, k}) - mu;
                 var += diff * diff;
             }
             var /= d;
@@ -123,8 +127,8 @@ void layer_norm(const Tensor& x, const Tensor& g, const Tensor& b, Tensor& out, 
 
             std::vector<float> xhat(d), dxhat(d);
             for(int k = 0; k < d; k++){
-                xhat[k] = (x.at({i, k}) - mu) / sigma;
-                dxhat[k] = out.grad_at({i, k}) * g.at({k});
+                xhat[k] = (x.at(std::array<int, 2>{i, k}) - mu) / sigma;
+                dxhat[k] = out.grad_at(std::array<int, 2>{i, k}) * g.at(std::array<int, 1>{k});
             }
 
             float mean_dxhat = 0.0f, mean_dxhat_xhat = 0.0f;
@@ -137,9 +141,9 @@ void layer_norm(const Tensor& x, const Tensor& g, const Tensor& b, Tensor& out, 
 
             for(int k = 0; k < d; k++){
                 float dx = (dxhat[k] - mean_dxhat - xhat[k] * mean_dxhat_xhat) / sigma;
-                x.grad_at({i, k}) += dx;
-                g.grad_at({k}) += out.grad_at({i, k}) * xhat[k];
-                b.grad_at({k}) += out.grad_at({i, k});
+                x.grad_at(std::array<int, 2>{i, k}) += dx;
+                g.grad_at(std::array<int, 1>{k}) += out.grad_at(std::array<int, 2>{i, k}) * xhat[k];
+                b.grad_at(std::array<int, 1>{k}) += out.grad_at(std::array<int, 2>{i, k});
             }
         }
     });
@@ -151,7 +155,7 @@ void add_bias(const Tensor& x, const Tensor& b, Tensor& out) {
 
     for(int i = 0; i < N; i++){
         for(int k = 0; k < d; k++){
-            out.at({i, k}) = x.at({i, k}) + b.at({k});
+            out.at(std::array<int, 2>{i, k}) = x.at(std::array<int, 2>{i, k}) + b.at(std::array<int, 1>{k});
         }
     }
 
@@ -161,8 +165,8 @@ void add_bias(const Tensor& x, const Tensor& b, Tensor& out) {
 
         for(int i = 0; i < N; i++){
             for(int k = 0; k < d; k++){
-                x.grad_at({i, k}) += out.grad_at({i, k});
-                b.grad_at({k}) += out.grad_at({i, k});
+                x.grad_at(std::array<int, 2>{i, k}) += out.grad_at(std::array<int, 2>{i, k});
+                b.grad_at(std::array<int, 1>{k}) += out.grad_at(std::array<int, 2>{i, k});
             }
         }
     });
@@ -175,9 +179,9 @@ void gelu(const Tensor& x, Tensor& out) {
 
     for(int i = 0; i < N; i++){
         for(int k = 0; k < d; k++){
-            float v = x.at({i, k});
+            float v = x.at(std::array<int, 2>{i, k});
             float u = c * (v + 0.044715f * v * v * v);
-            out.at({i, k}) = 0.5f * v * (1.0f + std::tanh(u));
+            out.at(std::array<int, 2>{i, k}) = 0.5f * v * (1.0f + std::tanh(u));
         }
     }
 
@@ -187,12 +191,12 @@ void gelu(const Tensor& x, Tensor& out) {
 
         for(int i = 0; i < N; i++){
             for(int k = 0; k < d; k++){
-                float v = x.at({i, k});
+                float v = x.at(std::array<int, 2>{i, k});
                 float u = c * (v + 0.044715f * v * v * v);
                 float t = std::tanh(u);
                 float du_dv = c * (1.0f + 3.0f * 0.044715f * v * v);
                 float dgelu_dv = 0.5f * (1.0f + t) + 0.5f * v * (1.0f - t * t) * du_dv;
-                x.grad_at({i, k}) += out.grad_at({i, k}) * dgelu_dv;
+                x.grad_at(std::array<int, 2>{i, k}) += out.grad_at(std::array<int, 2>{i, k}) * dgelu_dv;
             }
         }
     });
@@ -226,20 +230,20 @@ void softmax(const Tensor& S, Tensor& out){
     for(int i = 0; i < v.shape[0]; i++){
         float maxx = -std::numeric_limits<float>::infinity();
         for(int j = 0; j < v.shape[1]; j++){
-            maxx = std::max(maxx, v.at({i, j}));
+            maxx = std::max(maxx, v.at(std::array<int, 2>{i, j}));
         }
 
         for(int j = 0; j < v.shape[1]; j++){
-            newOut.at({i, j}) = v.at({i, j}) - maxx;
+            newOut.at(std::array<int, 2>{i, j}) = v.at(std::array<int, 2>{i, j}) - maxx;
         }
         float total = 0.0f;
         for(int j = 0; j < v.shape[1]; j++){
-            newOut.at({i, j}) = std::exp(newOut.at({i, j}));
-            total += newOut.at({i, j});
+            newOut.at(std::array<int, 2>{i, j}) = std::exp(newOut.at(std::array<int, 2>{i, j}));
+            total += newOut.at(std::array<int, 2>{i, j});
         }
 
         for(int j = 0; j < v.shape[1]; j++){
-            newOut.at({i, j}) /= total;
+            newOut.at(std::array<int, 2>{i, j}) /= total;
         }
     }
 
@@ -247,13 +251,13 @@ void softmax(const Tensor& S, Tensor& out){
         for(int i = 0; i < newOut.shape[0]; i++){
             float total = 0.0f;
             for(int j = 0; j < newOut.shape[1]; j++){
-                total += newOut.at({i, j}) * newOut.grad_at({i, j});
+                total += newOut.at(std::array<int, 2>{i, j}) * newOut.grad_at(std::array<int, 2>{i, j});
             }
 
             for(int j = 0; j < newOut.shape[1]; j++){
-                float P = newOut.at({i, j});
-                float dP = newOut.grad_at({i, j});
-                v.grad_at({i, j}) += P * dP - P * total;
+                float P = newOut.at(std::array<int, 2>{i, j});
+                float dP = newOut.grad_at(std::array<int, 2>{i, j});
+                v.grad_at(std::array<int, 2>{i, j}) += P * dP - P * total;
             }
         }
     });
@@ -284,14 +288,14 @@ void attention_core(Arena& arena, Tensor& x, Tensor& Wk, Tensor& Wq, Tensor& Wv,
 
         for(int i = 0; i < QKT.shape[0]; i++){
             for(int j = 0; j < QKT.shape[1]; j++){
-                    S.at({i, j}) = QKT.at({i, j}) / std::sqrt(x.shape[x.shape.size() - 1]);
+                    S.at(std::array<int, 2>{i, j}) = QKT.at(std::array<int, 2>{i, j}) / std::sqrt(x.shape[x.shape.size() - 1]);
             }
         }
 
         tape_push([S, QKT, x](){
             for(int i = 0; i < QKT.shape[0]; i++){
                 for(int j = 0; j < QKT.shape[1]; j++){
-                        QKT.grad_at({i, j}) += S.grad_at({i, j}) / std::sqrt(x.shape[x.shape.size() - 1]);
+                        QKT.grad_at(std::array<int, 2>{i, j}) += S.grad_at(std::array<int, 2>{i, j}) / std::sqrt(x.shape[x.shape.size() - 1]);
                 }
             }
         });
@@ -300,7 +304,7 @@ void attention_core(Arena& arena, Tensor& x, Tensor& Wk, Tensor& Wq, Tensor& Wv,
 
         for(int i = 0; i < S.shape[0]; i++){
             for(int j = i + 1; j < S.shape[1]; j++){
-                S.at({i, j}) = -std::numeric_limits<float>::infinity();
+                S.at(std::array<int, 2>{i, j}) = -std::numeric_limits<float>::infinity();
             }
         }
 
@@ -308,7 +312,7 @@ void attention_core(Arena& arena, Tensor& x, Tensor& Wk, Tensor& Wq, Tensor& Wv,
             for(int i = 0; i < S.shape[0]; i++){
                 for(int j = 0; j < S.shape[1]; j++){
                     if(j > i){
-                        S.grad_at({i, j}) = 0;
+                        S.grad_at(std::array<int, 2>{i, j}) = 0;
                     }
                 }
             }
@@ -363,14 +367,14 @@ void attention(Arena& arena, Tensor& x, Tensor& Wk, Tensor& Wq, Tensor& Wv, Tens
 
             for(int i = 0; i < QKT.shape[0]; i++){
                 for(int j = 0; j < QKT.shape[1]; j++){
-                        S.at({i, j}) = QKT.at({i, j}) / std::sqrt(x.shape[x.shape.size() - 1] / H);
+                        S.at(std::array<int, 2>{i, j}) = QKT.at(std::array<int, 2>{i, j}) / std::sqrt(x.shape[x.shape.size() - 1] / H);
                 }
             }
 
             tape_push([S, QKT, x, H](){
                 for(int i = 0; i < QKT.shape[0]; i++){
                     for(int j = 0; j < QKT.shape[1]; j++){
-                            QKT.grad_at({i, j}) += S.grad_at({i, j}) / std::sqrt(x.shape[x.shape.size() - 1] / H);
+                            QKT.grad_at(std::array<int, 2>{i, j}) += S.grad_at(std::array<int, 2>{i, j}) / std::sqrt(x.shape[x.shape.size() - 1] / H);
                     }
                 }
             });
@@ -379,7 +383,7 @@ void attention(Arena& arena, Tensor& x, Tensor& Wk, Tensor& Wq, Tensor& Wv, Tens
 
             for(int i = 0; i < S.shape[0]; i++){
                 for(int j = i + 1; j < S.shape[1]; j++){
-                    S.at({i, j}) = -std::numeric_limits<float>::infinity();
+                    S.at(std::array<int, 2>{i, j}) = -std::numeric_limits<float>::infinity();
                 }
             }
 
@@ -387,7 +391,7 @@ void attention(Arena& arena, Tensor& x, Tensor& Wk, Tensor& Wq, Tensor& Wv, Tens
                 for(int i = 0; i < S.shape[0]; i++){
                     for(int j = 0; j < S.shape[1]; j++){
                         if(j > i){
-                            S.grad_at({i, j}) = 0;
+                            S.grad_at(std::array<int, 2>{i, j}) = 0;
                         }
                     }
                 }
@@ -411,34 +415,34 @@ void cross_entropy(const Tensor& logits, const std::vector<int>& targets, Tensor
     for (int i = 0; i < N; i++) {
         float maxx = -std::numeric_limits<float>::infinity();
         for (int j = 0; j < V; j++) {
-            maxx = std::max(maxx, logits.at({i, j}));
+            maxx = std::max(maxx, logits.at(std::array<int, 2>{i, j}));
         }
 
         float sum_exp = 0.0f;
         for (int j = 0; j < V; j++) {
-            sum_exp += std::exp(logits.at({i, j}) - maxx);
+            sum_exp += std::exp(logits.at(std::array<int, 2>{i, j}) - maxx);
         }
         float logsumexp = maxx + std::log(sum_exp);
 
-        total_loss += logsumexp - logits.at({i, targets[i]});
+        total_loss += logsumexp - logits.at(std::array<int, 2>{i, targets[i]});
     }
-    out.at({0}) = total_loss / N;
+    out.at(std::array<int, 1>{0}) = total_loss / N;
 
     tape_push([logits, targets, N, V]() {
         for (int i = 0; i < N; i++) {
             float maxx = -std::numeric_limits<float>::infinity();
             for (int j = 0; j < V; j++) {
-                maxx = std::max(maxx, logits.at({i, j}));
+                maxx = std::max(maxx, logits.at(std::array<int, 2>{i, j}));
             }
             float sum_exp = 0.0f;
             for (int j = 0; j < V; j++) {
-                sum_exp += std::exp(logits.at({i, j}) - maxx);
+                sum_exp += std::exp(logits.at(std::array<int, 2>{i, j}) - maxx);
             }
 
             for (int j = 0; j < V; j++) {
-                float p = std::exp(logits.at({i, j}) - maxx) / sum_exp;
+                float p = std::exp(logits.at(std::array<int, 2>{i, j}) - maxx) / sum_exp;
                 float onehot = (j == targets[i]) ? 1.0f : 0.0f;
-                logits.grad_at({i, j}) += (p - onehot) / N;
+                logits.grad_at(std::array<int, 2>{i, j}) += (p - onehot) / N;
             }
         }
     });
@@ -447,15 +451,15 @@ void cross_entropy(const Tensor& logits, const std::vector<int>& targets, Tensor
 void add(const Tensor& x, const Tensor& y, Tensor& out){
     for(int i = 0; i < x.shape[0]; i++){
         for(int j = 0; j < x.shape[1]; j++){
-            out.at({i, j}) = x.at({i, j}) + y.at({i, j});
+            out.at(std::array<int, 2>{i, j}) = x.at(std::array<int, 2>{i, j}) + y.at(std::array<int, 2>{i, j});
         }
     }
 
     tape_push([x, y, out]() {
         for(int i = 0; i < x.shape[0]; i++){
             for(int j = 0; j < x.shape[1]; j++){
-                x.grad_at({i, j}) += out.grad_at({i, j}); 
-                y.grad_at({i, j}) += out.grad_at({i, j});
+                x.grad_at(std::array<int, 2>{i, j}) += out.grad_at(std::array<int, 2>{i, j}); 
+                y.grad_at(std::array<int, 2>{i, j}) += out.grad_at(std::array<int, 2>{i, j});
         }
     }
     });

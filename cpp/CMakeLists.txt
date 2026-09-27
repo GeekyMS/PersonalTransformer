@@ -11,6 +11,8 @@ endif()
 
 add_compile_options(-Wall -Wextra)
 
+find_package(OpenMP)
+
 # Everything in src/ becomes the "model" library: Tensor, allocator, ops,
 # autograd. Test binaries and the trainer link against this.
 file(GLOB MODEL_SOURCES CONFIGURE_DEPENDS src/*.cpp)
@@ -18,6 +20,9 @@ file(GLOB MODEL_SOURCES CONFIGURE_DEPENDS src/*.cpp)
 if(MODEL_SOURCES)
   add_library(model STATIC ${MODEL_SOURCES})
   target_include_directories(model PUBLIC src include)
+  if(OpenMP_CXX_FOUND)
+    target_link_libraries(model PUBLIC OpenMP::OpenMP_CXX)
+  endif()
 
   # Each test/op_*.cpp becomes its own standalone binary: loads input dumps,
   # runs one op, writes the output dump. See test/README.md for the contract.

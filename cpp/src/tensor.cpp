@@ -13,24 +13,6 @@ Tensor::Tensor(float* data, std::vector<int> shape)
 Tensor::Tensor(float* data, std::vector<int> shape, std::vector<int> strides, int offset)
     : data(data), shape(std::move(shape)), strides(std::move(strides)), offset(offset), grad(nullptr) {}
 
-float& Tensor::at(const std::vector<int>& idx) const {
-    int temp = 0;
-    for(int i = 0; i < (int)idx.size(); i++){
-        int k = idx[i];
-        temp += k * this->strides[i];
-    }
-    return this->data[temp + this->offset];
-}
-
-float& Tensor::grad_at(const std::vector<int>& idx) const {
-    int temp = 0;
-    for(int i = 0; i < (int)idx.size(); i++){
-        int k = idx[i];
-        temp += k * this->strides[i];
-    }
-    return this->grad[temp + this->offset];
-}
-
 Tensor Tensor::transpose(int i, int j) const {
     std::vector<int> newShape(this->shape);
     newShape[i] = this->shape[j];

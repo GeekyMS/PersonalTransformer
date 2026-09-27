@@ -3,6 +3,7 @@
 // buffer it does not own. See docs/roadmap.md Phase 5.1.
 
 #include <vector>
+#include <array>
 
 #include "arena.h"
 
@@ -23,9 +24,23 @@ struct Tensor {
     Tensor(float* data, std::vector<int> shape, std::vector<int> strides, int offset);
 
     // Element access via shape-space indices, e.g. t.at({b, h, i, j}).
-    float& at(const std::vector<int>& idx) const;
+    template<size_t N> float& at(const std::array<int, N>& idx) const {
+        int temp = 0;
+        for (int i = 0; i < (int)idx.size(); i++) {
+            int k = idx[i];
+            temp += k * this->strides[i];
+        }
+        return this->data[temp + this->offset];
+    }
 
-    float& grad_at(const std::vector<int>& idx) const;
+    template<size_t N> float& grad_at(const std::array<int, N>& idx) const {
+        int temp = 0;
+        for (int i = 0; i < (int)idx.size(); i++) {
+            int k = idx[i];
+            temp += k * this->strides[i];
+        }
+        return this->grad[temp + this->offset];
+    }
 
     // Returns a new Tensor with axes i and j swapped. Same `data`, no copy.
     Tensor transpose(int i, int j) const;

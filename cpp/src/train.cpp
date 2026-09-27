@@ -310,7 +310,7 @@ float evaluate(ModelParams& p, Arena& scratch, const std::vector<int>& val_ids,
         Tensor flat_logits = logits.reshape({kB * kT, kV});
         Tensor loss = make_tensor(scratch, {1}, /*needs_grad=*/false);
         cross_entropy(flat_logits, y, loss);
-        total += loss.at({0});
+        total += loss.at(std::array<int, 1>{0});
     }
     return total / n_batches;
 }
@@ -344,7 +344,7 @@ std::string generate(ModelParams& p, Arena& scratch, const Dataset& d,
 
         int last_t = kT - 1;
         std::vector<float> row(kV);
-        for (int j = 0; j < kV; j++) row[j] = logits.at({0, last_t, j}) / temp;
+        for (int j = 0; j < kV; j++) row[j] = logits.at(std::array<int, 3>{0, last_t, j}) / temp;
 
         int k = std::min(top_k, kV);
         std::vector<float> sorted_row = row;
@@ -433,12 +433,12 @@ int main() {
 
             float val_loss = evaluate(p, arena, d.val_ids, rng);
             std::printf("%d: train %.4f  val %.4f  (%.3f s/step, %.1fs elapsed)\n",
-                        step, loss.at({0}), val_loss, sec_per_step, total_elapsed);
+                        step, loss.at(std::array<int, 1>{0}), val_loss, sec_per_step, total_elapsed);
             std::fflush(stdout);   // printf is fully buffered when redirected to a file
                                     // (slurm-%j.out) -- flush so progress shows up live,
                                     // matching train.py's print(..., flush=True)
             std::ofstream f(log_path, std::ios::app);
-            f << step << "," << loss.at({0}) << "," << val_loss << "," << total_elapsed << "\n";
+            f << step << "," << loss.at(std::array<int, 1>{0}) << "," << val_loss << "," << total_elapsed << "\n";
         }
         if (step % 500 == 0) {
             std::string sample = generate(p, arena, d, "\n", 300, rng);
