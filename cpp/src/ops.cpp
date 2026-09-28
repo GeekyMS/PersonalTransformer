@@ -23,25 +23,31 @@ void matmul(const Tensor& A, const Tensor& B, Tensor& out) {
     }
 
     tape_push([A, B, out]() {
-        #pragma omp parallel for
-        for(int i = 0; i < (int)A.shape[0]; i++){
-            for(int k = 0; k < (int)A.shape[1]; k++){
-                float dA = A.grad_at(std::array<int, 2>{i, k});
-                for(int j = 0; j < (int)B.shape[1]; j++){
-                    dA += out.grad_at(std::array<int, 2>{i, j}) * B.at(std::array<int, 2>{k, j});
+        // One thread team for both loops instead of two -- they write disjoint
+        // outputs (A.grad vs B.grad), so they can share a region with `nowait`
+        // between them instead of paying a second fork/join.
+        #pragma omp parallel
+        {
+            #pragma omp for nowait
+            for(int i = 0; i < (int)A.shape[0]; i++){
+                for(int k = 0; k < (int)A.shape[1]; k++){
+                    float dA = A.grad_at(std::array<int, 2>{i, k});
+                    for(int j = 0; j < (int)B.shape[1]; j++){
+                        dA += out.grad_at(std::array<int, 2>{i, j}) * B.at(std::array<int, 2>{k, j});
+                    }
+                    A.grad_at(std::array<int, 2>{i, k}) = dA;
                 }
-                A.grad_at(std::array<int, 2>{i, k}) = dA;
             }
-        }
 
-        #pragma omp parallel for
-        for(int k = 0; k < (int)B.shape[0]; k++){
-            for(int j = 0; j < (int)B.shape[1]; j++){
-                float dB = B.grad_at(std::array<int, 2>{k, j});
-                for(int i = 0; i < (int)A.shape[0]; i++){
-                    dB += out.grad_at(std::array<int, 2>{i, j}) * A.at(std::array<int, 2>{i, k});
+            #pragma omp for
+            for(int k = 0; k < (int)B.shape[0]; k++){
+                for(int j = 0; j < (int)B.shape[1]; j++){
+                    float dB = B.grad_at(std::array<int, 2>{k, j});
+                    for(int i = 0; i < (int)A.shape[0]; i++){
+                        dB += out.grad_at(std::array<int, 2>{i, j}) * A.at(std::array<int, 2>{i, k});
+                    }
+                    B.grad_at(std::array<int, 2>{k, j}) = dB;
                 }
-                B.grad_at(std::array<int, 2>{k, j}) = dB;
             }
         }
     });

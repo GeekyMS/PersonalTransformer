@@ -11,6 +11,14 @@ endif()
 
 add_compile_options(-Wall -Wextra)
 
+# --constraint=amd7763 in train.slurm targets AMD EPYC 7763 (Zen3). GCC 9.4
+# (the module train.slurm loads) doesn't know -march=znver3 yet (added in
+# GCC 10), but znver2 is recognized and still enables the AVX2/FMA ISA
+# extensions Zen3 supports -- just without Zen3-specific instruction tuning.
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+  add_compile_options(-march=znver2 -mtune=znver2)
+endif()
+
 find_package(OpenMP)
 
 # Everything in src/ becomes the "model" library: Tensor, allocator, ops,
