@@ -6,6 +6,10 @@ __pycache__/
 /CLAUDE.md
 /docs/roadmap.md
 /cpp/build/
+/cpp/build-*/
+/cpp/.cache/
 cpp/test/dumps/*.bin
 visualizations/media/
 bench/*/checkpoint.bin
+slurm-*.out
+slurm-*.err

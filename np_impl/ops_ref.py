@@ -10,6 +10,18 @@ def matmul(A: np.ndarray, B: np.ndarray) -> np.ndarray:
     return A @ B
 
 
+def matmul_grads(A: np.ndarray, B: np.ndarray, dOut: np.ndarray,
+                 dA: np.ndarray, dB: np.ndarray) -> np.ndarray:
+    # Same logical values for all 64 C++ view layouts, with nonzero initial
+    # grads and two backward calls to check accumulation.
+    grad_A = dOut @ B.T
+    grad_B = A.T @ dOut
+    result = np.concatenate([(A @ B).ravel(), (dA + grad_A).ravel(),
+                             (dB + grad_B).ravel(), (dA + 2 * grad_A).ravel(),
+                             (dB + 2 * grad_B).ravel()])
+    return np.tile(result, 64)
+
+
 def embed(x: np.ndarray, tok_emb: np.ndarray, pos_emb: np.ndarray) -> np.ndarray:
     # x: flat (B*T,) float-encoded ints, row-major over (B, T) — i.e. index
     # b*T+t. T is recovered from pos_emb's shape, B from x's length.
