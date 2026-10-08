@@ -23,6 +23,20 @@
       "atol": 1e-4
     },
     {
+      "op": "matmul_backward",
+      "np_ref": "np_impl.ops_ref.matmul_grads",
+      "inputs": {
+        "A": [8, 16],
+        "B": [16, 4],
+        "dOut": [8, 4],
+        "dA": [8, 16],
+        "dB": [16, 4]
+      },
+      "_comment": "64 view layouts: forward output, both grads after one backward, both grads after two. 64 * (32 + 128 + 64 + 128 + 64)",
+      "output": [26624],
+      "atol": 1e-4
+    },
+    {
       "op": "embed",
       "np_ref": "np_impl.ops_ref.embed",
       "inputs": {

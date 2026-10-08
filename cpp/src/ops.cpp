@@ -6,11 +6,110 @@
 #include <stdexcept>
 #include <limits>
 
+#ifdef USE_BLAS
+#ifdef USE_ACCELERATE
+#include <Accelerate/Accelerate.h>
+#else
+#include <cblas.h>
+#endif
+
+// BLAS can read row-major views and transposes directly. Pack only when
+// neither axis is contiguous, keeping offsets and padded row strides intact.
+static const float* blas_input(const Tensor& x, std::vector<float>& buffer,
+                              CBLAS_TRANSPOSE& trans, int& ld) {
+    if(x.strides[1] == 1 && x.strides[0] >= x.shape[1]){
+        trans = CblasNoTrans;
+        ld = x.strides[0];
+        return x.data + x.offset;
+    }
+    if(x.strides[0] == 1 && x.strides[1] >= x.shape[0]){
+        trans = CblasTrans;
+        ld = x.strides[1];
+        return x.data + x.offset;
+    }
+
+    buffer.resize((size_t)x.shape[0] * x.shape[1]);
+    for(int i = 0; i < x.shape[0]; i++){
+        for(int j = 0; j < x.shape[1]; j++){
+            buffer[i * x.shape[1] + j] = x.at(std::array<int, 2>{i, j});
+        }
+    }
+    trans = CblasNoTrans;
+    ld = x.shape[1];
+    return buffer.data();
+}
+
+// Only arithmetic -- backward calls this without recording more tape nodes.
+// beta=0 overwrites forward output; beta=1 accumulates into existing grads.
+static void matmul_blas(const Tensor& A, const Tensor& B, const Tensor& out, float beta) {
+    int M = A.shape[0];
+    int K = A.shape[1];
+    int N = B.shape[1];
+    if(M == 0 || N == 0){
+        return;
+    }
+    if(K == 0){
+        for(int i = 0; i < M; i++){
+            for(int j = 0; j < N; j++){
+                out.at(std::array<int, 2>{i, j}) = beta == 0.0f ? 0.0f : beta * out.at(std::array<int, 2>{i, j});
+            }
+        }
+        return;
+    }
+
+    bool row_major = out.strides[1] == 1 && out.strides[0] >= N;
+    if(!row_major && out.strides[0] == 1 && out.strides[1] >= M){
+        // Write a transposed output directly: (A @ B)^T = B^T @ A^T.
+        matmul_blas(B.transpose(0, 1), A.transpose(0, 1), out.transpose(0, 1), beta);
+        return;
+    }
+
+    std::vector<float> a_buffer;
+    std::vector<float> b_buffer;
+    std::vector<float> out_buffer;
+    CBLAS_TRANSPOSE transA, transB;
+    int lda, ldb;
+    const float* a_data = blas_input(A, a_buffer, transA, lda);
+    const float* b_data = blas_input(B, b_buffer, transB, ldb);
+    float* out_data = out.data + out.offset;
+    int ldc = out.strides[0];
+    if(!row_major){
+        out_buffer.resize((size_t)M * N);
+        if(beta != 0.0f){
+            for(int i = 0; i < M; i++){
+                for(int j = 0; j < N; j++){
+                    out_buffer[i * N + j] = out.at(std::array<int, 2>{i, j});
+                }
+            }
+        }
+        out_data = out_buffer.data();
+        ldc = N;
+    }
+
+    cblas_sgemm(CblasRowMajor, transA, transB, M, N, K,
+                1.0f, a_data, lda, b_data, ldb, beta, out_data, ldc);
+
+    if(!row_major){
+        for(int i = 0; i < M; i++){
+            for(int j = 0; j < N; j++){
+                out.at(std::array<int, 2>{i, j}) = out_buffer[i * N + j];
+            }
+        }
+    }
+}
+#endif
+
 void matmul(const Tensor& A, const Tensor& B, Tensor& out) {
-    if(A.shape[1] != B.shape[0]){
+    if(A.shape.size() != 2 || B.shape.size() != 2 || out.shape.size() != 2){
+        throw std::runtime_error("matmul: expected 2D tensors");
+    }
+    if(A.shape[1] != B.shape[0] || out.shape[0] != A.shape[0] || out.shape[1] != B.shape[1]){
         throw std::runtime_error("matmul: shapes do not match");
     }
-    
+
+#ifdef USE_BLAS
+    matmul_blas(A, B, out, 0.0f);
+#else
     #pragma omp parallel for
     for(int i = 0; i < A.shape[0]; i++){
         for(int j = 0; j < B.shape[1]; j++){
@@ -21,8 +120,20 @@ void matmul(const Tensor& A, const Tensor& B, Tensor& out) {
             out.at(std::array<int, 2>{i, j}) = temp;
         }
     }
+#endif
 
     tape_push([A, B, out]() {
+#ifdef USE_BLAS
+        Tensor dOut = out;
+        dOut.data = out.grad;
+        Tensor dA = A;
+        dA.data = A.grad;
+        Tensor dB = B;
+        dB.data = B.grad;
+
+        matmul_blas(dOut, B.transpose(0, 1), dA, 1.0f);
+        matmul_blas(A.transpose(0, 1), dOut, dB, 1.0f);
+#else
         // One thread team for both loops instead of two -- they write disjoint
         // outputs (A.grad vs B.grad), so they can share a region with `nowait`
         // between them instead of paying a second fork/join.
@@ -50,6 +161,7 @@ void matmul(const Tensor& A, const Tensor& B, Tensor& out) {
                 }
             }
         }
+#endif
     });
 
 }

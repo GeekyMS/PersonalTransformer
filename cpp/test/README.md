@@ -21,3 +21,9 @@ Op by op, diffed against the NumPy reference at each step:
 
 CMake picks up every `cpp/test/op_*.cpp` automatically and builds it as its own
 binary — no CMakeLists.txt edits needed as you add ops.
+
+`matmul_backward` checks forward and both gradients across 64 combinations
+of contiguous, padded, transposed, and strided views with nonzero offsets.
+It starts with nonzero gradients and runs backward twice to check accumulation,
+and checks that padding is untouched. Run the same contract with BLAS enabled
+and with `-DUSE_BLAS=OFF` to compare both implementations.
