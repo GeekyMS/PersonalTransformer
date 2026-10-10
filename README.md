@@ -59,16 +59,18 @@ docs/          roadmap, phase writeups, paper-exercise worksheets
 
 - `Tensor`, arena allocator, and tape-based autograd are implemented (`cpp/include/`, `cpp/src/`).
 - Ops ported and verified against the NumPy reference via the dump/compare harness
-  (`cpp/test/README.md`): `matmul`, `embed`, `layer_norm`, `add_bias`, `gelu`, `mlp`.
+  (`cpp/test/README.md`): `matmul`, `embed`, `layer_norm`, `add_bias`, `gelu`, `mlp`,
+  attention, and transformer blocks, including backward checks.
 - Each op follows the same protocol: implement in C++, dump inputs/outputs to fixed-seed binary
   files, diff against `np_impl` output with `cpp/test/compare.py`. Only move to the next op once
   it passes.
-- Not yet ported: attention (forward + backward), the full block/model assembly, the training
-  loop, and the C++-side gradient checks.
+- Full model assembly and the AdamW training loop are implemented. CPU matmul uses BLAS by
+  default for forward and backward; the handwritten OpenMP backend remains available.
+- Full training comparisons and profiling are ongoing; Phase 5's acceptance gates remain open.
 
 ## CPU baseline (NumPy, `bench/run1`)
 
-One training run recorded so far, 4,900 steps:
+Initial NumPy run, logged through step 4,900:
 
 | Step | Train loss | Val loss |
 |---|---|---|
@@ -81,13 +83,34 @@ drifts upward after — the run overfits past that point on this dataset size. L
 [`bench/run1/loss_curve.png`](bench/run1/loss_curve.png), full log:
 [`bench/run1/loss_log.csv`](bench/run1/loss_log.csv).
 
-**Wall-clock training time:** not recorded for this run — TBD.
+**Wall-clock training time:** not recorded for this initial run.
+
+## CPU training performance
+
+Slurm results recorded on October 10, 2026, with four allocated CPUs on AMD EPYC 7763 nodes
+and the model constants above:
+
+- Replacing the C++ handwritten OpenMP matmul with OpenBLAS for forward and backward reduced
+  the first training update from **175.585 s to 9.435 s: 18.6× faster**. Both runs printed the
+  same initial losses (`train 4.2164`, `val 4.1825`).
+- Over **5,000 training updates**, the C++ BLAS run was **1.67× faster than NumPy**,
+  a **40.2% reduction** in the timed training loop, saving approximately **7h 14m**.
+
+| Implementation | Total timed training loop | Average per update |
+|---|---:|---:|
+| C++ float32 + OpenBLAS | 38,770.6 s (10h 46m) | 7.7541 s |
+| NumPy float64 + OpenBLAS | 64,807.8 s (18h 00m) | 12.9616 s |
+
+Totals include validation, periodic generation, and checkpoint writes; initialization and the
+final fixed-seed sample are outside the timer. These compare the current pipelines, with
+different precision and generation workloads on separate shared-node allocations. Timing
+definitions, BLAS versions, and local correctness checks are in
+[`bench/cpu_blas.md`](bench/cpu_blas.md).
 
 ## What's next
 
-1. Finish the Phase 5 C++ op port — attention forward/backward is next, then block/model
-   assembly and the C++ training loop.
-2. Confirm the C++ port reproduces the NumPy loss curve exactly, same seed.
+1. Complete Phase 5 validation and profiling of the full C++ training loop.
+2. Validate NumPy/C++ loss curves and fixed-seed samples against the Phase 5 acceptance gate.
 3. Phase 4.5 (JAX/XLA) — port forward pass, inspect compiled IR.
 4. Phase 6 — CUDA: naive attention kernel, then tiled/online-softmax, working toward a
    FlashAttention-style fused kernel, with a written prediction of what an optimal kernel should

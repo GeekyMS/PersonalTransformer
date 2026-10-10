@@ -38,3 +38,18 @@ cmake --build cpp/build-naive -j 4
 BLAS calls have no surrounding OpenMP parallel region. Row-major views,
 transposes, offsets, and padded row strides are handled directly; other
 strided views are packed for BLAS and output is scattered back afterward.
+
+## CPU training performance
+
+On Slurm with four allocated CPUs, OpenBLAS reduced the first C++ training
+update from **175.585 s to 9.435 s**, an **18.6× speedup** over the
+handwritten OpenMP backend. The initial printed losses stayed the same.
+
+The completed 5,000-update C++ BLAS run took **38,770.6 s (10h 46m)**,
+averaging **7.7541 s/update**. NumPy took **64,807.8 s (18h 00m)**,
+averaging **12.9616 s/update**: C++ was **1.67× faster**, with **40.2% less
+time** in the timed training loop.
+
+These runs use different precision and generation workloads on separate
+shared-node allocations. See [bench/cpu_blas.md](../bench/cpu_blas.md) for
+the configuration, timing definitions, and correctness checks.
